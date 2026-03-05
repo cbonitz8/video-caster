@@ -6,6 +6,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from platformdirs import user_config_dir
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -14,7 +16,7 @@ else:
     except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]
 
-CONFIG_DIR = Path.home() / ".config" / "video-caster"
+CONFIG_DIR = Path(user_config_dir("video-caster"))
 CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 DEFAULT_WATCH_FOLDERS = [Path.home() / "Movies"]

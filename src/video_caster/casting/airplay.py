@@ -5,17 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 
 import pyatv
 from pyatv.const import Protocol
 
 from video_caster.casting.base import CastHandler, PlaybackStatus
+from video_caster.config import CONFIG_DIR
 from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
 
-CREDENTIALS_PATH = Path.home() / ".config" / "video-caster" / "credentials.json"
+CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
 
 
 def _load_credentials() -> dict[str, dict[str, str]]:

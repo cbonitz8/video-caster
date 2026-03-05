@@ -1,0 +1,116 @@
+Screen {
+    layout: grid;
+    grid-size: 2 1;
+    grid-columns: 3fr 1fr;
+    grid-rows: 1fr;
+}
+
+/* ── Left panel ── */
+
+#left-panel {
+    height: 100%;
+    overflow-y: auto;
+}
+
+/* ── Tabs ── */
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 0;
+    overflow-y: auto;
+}
+
+/* ── Right panel ── */
+
+#right-panel {
+    height: 100%;
+    layout: vertical;
+}
+
+#device-panel {
+    border: solid $accent;
+    border-title-color: $text;
+    height: 1fr;
+    min-height: 8;
+}
+
+#devices-header {
+    text-style: bold;
+    padding: 0 1;
+    color: $accent;
+}
+
+#no-devices {
+    padding: 1 2;
+    color: $text-muted;
+}
+
+#device-listview {
+    height: auto;
+    max-height: 100%;
+}
+
+#qr-panel {
+    border: solid $accent;
+    border-title-color: $text;
+    height: auto;
+    padding: 0;
+    background: $surface;
+}
+
+QRCodeWidget {
+    color: $text;
+    text-align: center;
+}
+
+#playback-panel {
+    border: solid $accent;
+    border-title-color: $text;
+    height: auto;
+    min-height: 7;
+    padding: 0 1;
+}
+
+#now-playing {
+    text-style: bold;
+    padding: 0 0 1 0;
+}
+
+#progress-bar {
+    width: 100%;
+}
+
+Bar {
+    width: 100%;
+}
+
+#time-display {
+    text-align: center;
+    color: $text-muted;
+}
+
+#volume-display {
+    text-align: right;
+    color: $text-muted;
+}
+
+#transport-buttons {
+    height: 0;
+}
+
+/* ── Home tab ── */
+
+/* ── Browse tab ── */
+
+#browse-tab .directory-tree {
+    height: 1fr;
+}
+
+/* ── Manual tab ── */
+
+#manual-browser {
+    height: 1fr;
+}

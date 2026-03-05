@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-caster"
+version = "0.1.0"
+description = "Cast local video files to Chromecast and Apple TV devices"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.47.0",
+    "pychromecast>=14.0.0",
+    "pyatv>=0.16.0",
+    "aiohttp>=3.9.0",
+    "zeroconf>=0.131.0",
+    "async-upnp-client>=0.43.0",
+    "segno>=1.6.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+]
+
+[project.scripts]
+video-caster = "video_caster.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_caster"]

@@ -190,6 +190,18 @@ class HistoryStore:
     async def get_saved_position(self, file_path: str) -> float:
         return await self._run(self._get_saved_position, file_path)
 
+    def _has_file(self, file_path: str) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT 1 FROM watch_history WHERE file_path = ? LIMIT 1",
+            (file_path,),
+        ).fetchone()
+        return row is not None
+
+    async def has_file(self, file_path: str) -> bool:
+        """True if the file was ever cast, completed or not."""
+        return await self._run(self._has_file, file_path)
+
     def _get_completed_or_nearly(self, limit: int = 50) -> list[WatchRecord]:
         """Get episodes that are completed or >= 90% watched."""
         conn = self._get_conn()

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Caster</title>
+<style>
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 2rem 1rem; max-width: 40rem; }
+  code { font: 13px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Video Caster</h1>
+<p>The core service is running. The phone web app arrives in part 2; until then the API is:</p>
+<ul>
+  <li><code>GET /api/state</code>, <code>/api/library</code>, <code>/api/browse?path=</code>, <code>/api/settings</code></li>
+  <li><code>POST /api/cast</code>, <code>/api/playback/{toggle,stop,seek,volume}</code>, <code>/api/devices/{scan,select}</code>, <code>/api/pairing/pin</code></li>
+  <li><code>GET /api/events</code> (WebSocket)</li>
+</ul>
+</body>
+</html>

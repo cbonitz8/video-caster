@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from pychromecast.error import RequestTimeout
+
+from video_caster.casting.base import PlaybackStatus
+from video_caster.core.api import create_app
+from tests.conftest import LIVING_ROOM, make_video
+
+TOKEN = "test-token"
+LOCAL = {"Authorization": f"Bearer {TOKEN}"}
+
+
+@pytest.fixture
+async def client(aiohttp_client, engine):
+    await engine.scan_devices()
+    return await aiohttp_client(create_app(engine, TOKEN))
+
+
+async def test_index_served(client):
+    resp = await client.get("/")
+    assert resp.status == 200
+    assert "Video Caster" in await resp.text()
+
+
+async def test_state(client):
+    resp = await client.get("/api/state")
+    assert resp.status == 200
+    body = await resp.json()
+    assert {d["name"] for d in body["devices"]} == {"Living Room", "Bedroom"}
+    assert body["current"] is None
+
+
+async def test_library(client):
+    resp = await client.get("/api/library")
+    assert set(await resp.json()) == {"continue_watching", "up_next", "newly_added"}
+
+
+async def test_browse_roots_and_folder(client, watch_dir):
+    roots = await (await client.get("/api/browse")).json()
+    assert roots == [{"path": str(watch_dir), "name": "watch", "is_dir": True}]
+    entries = await (await client.get("/api/browse", params={"path": str(watch_dir)})).json()
+    assert [e["name"] for e in entries] == ["Movie.mkv"]
+
+
+async def test_browse_refuses_outside_watch_folders(client, tmp_path):
+    resp = await client.get("/api/browse", params={"path": str(tmp_path)})
+    assert resp.status == 403
+    assert "error" in await resp.json()
+
+
+async def test_browse_missing_folder(client, watch_dir):
+    resp = await client.get("/api/browse", params={"path": str(watch_dir / "nope")})
+    assert resp.status == 404
+
+
+async def test_cast_in_watch_folder(client, engine, video):
+    engine.select_device(LIVING_ROOM.id)
+    resp = await client.post("/api/cast", json={"path": str(video)})
+    assert resp.status == 202
+    assert await resp.json() == {"status": "casting", "device": "Living Room"}
+    await engine.cast_task
+
+
+async def test_cast_outside_needs_local_token(client, tmp_path):
+    outside = make_video(tmp_path / "elsewhere" / "clip.mkv")
+    assert (await client.post("/api/cast", json={"path": str(outside)})).status == 403
+    resp = await client.post("/api/cast", json={"path": str(outside)}, headers=LOCAL)
+    assert resp.status == 202
+    assert (await resp.json())["status"] == "waiting_for_device"
+
+
+async def test_cast_from_history_allowed(client, history, tmp_path):
+    old = make_video(tmp_path / "old-folder" / "clip.mkv")
+    await history.record_play(str(old), old.name, "dev", "Living Room", 100.0)
+    resp = await client.post("/api/cast", json={"path": str(old)})
+    assert resp.status == 202
+
+
+async def test_cast_wrong_token_refused(client, video):
+    resp = await client.post(
+        "/api/cast", json={"path": str(video)}, headers={"Authorization": "Bearer nope"})
+    assert resp.status == 403
+
+
+async def test_cast_missing_file(client, watch_dir):
+    resp = await client.post("/api/cast", json={"path": str(watch_dir / "gone.mkv")})
+    assert resp.status == 404
+
+
+@pytest.mark.parametrize("body", [
+    {},
+    {"path": 5},
+    {"path": "relative.mkv"},
+    {"path": "/x.mkv", "resume": "yes"},
+    ["not", "an", "object"],
+])
+async def test_cast_rejects_bad_body(client, body):
+    resp = await client.post("/api/cast", json=body)
+    assert resp.status == 400
+    assert "error" in await resp.json()
+
+
+async def test_cast_rejects_non_json(client):
+    resp = await client.post("/api/cast", data="not json")
+    assert resp.status == 400
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"level": "loud"}, {"level": None}, {"level": True}, {"level": float("nan")},
+])
+async def test_volume_rejects_bad_level(client, body):
+    resp = await client.post("/api/playback/volume", json=body)
+    assert resp.status == 400
+
+
+async def test_volume(client, orchestrator):
+    resp = await client.post("/api/playback/volume", json={"level": 0.5})
+    assert resp.status == 200
+    assert await resp.json() == {"ok": True}
+    assert ("set_volume", 0.5) in orchestrator.calls
+
+
+async def test_seek_offset(client, orchestrator):
+    orchestrator.status = PlaybackStatus(state="playing", current_time=10.0, duration=100.0)
+    resp = await client.post("/api/playback/seek", json={"offset": 10})
+    assert resp.status == 200
+    assert orchestrator.calls[-1] == ("seek", 20.0)
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"position": "x"}, {"offset": None}, {"position": 1, "offset": 1},
+])
+async def test_seek_rejects_bad_body(client, body):
+    resp = await client.post("/api/playback/seek", json=body)
+    assert resp.status == 400
+
+
+async def test_toggle_and_stop(client, orchestrator):
+    assert (await client.post("/api/playback/toggle")).status == 200
+    assert (await client.post("/api/playback/stop")).status == 200
+    assert ("toggle_pause",) in orchestrator.calls
+    assert ("stop_playback",) in orchestrator.calls
+
+
+async def test_device_timeout_is_504(client, orchestrator):
+    orchestrator.command_error = RequestTimeout("play", 10.0)
+    resp = await client.post("/api/playback/toggle")
+    assert resp.status == 504
+    assert "timed out" in (await resp.json())["error"]
+
+
+async def test_select_device(client):
+    ok = await client.post("/api/devices/select", json={"device_id": LIVING_ROOM.id})
+    assert ok.status == 200
+    missing = await client.post("/api/devices/select", json={"device_id": "nope"})
+    assert missing.status == 404
+
+
+async def test_scan_accepted(client):
+    resp = await client.post("/api/devices/scan")
+    assert resp.status == 202
+
+
+async def test_pin_without_request_is_409(client):
+    resp = await client.post("/api/pairing/pin", json={"pin": "1234"})
+    assert resp.status == 409
+
+
+async def test_settings_get(client, watch_dir):
+    body = await (await client.get("/api/settings")).json()
+    assert body["watch_folders"] == [{"path": str(watch_dir), "available": True}]
+
+
+async def test_settings_put_requires_token(client, tmp_path):
+    change = {"recently_added_limit": 5}
+    assert (await client.put("/api/settings", json=change)).status == 401
+    bad = await client.put(
+        "/api/settings", json=change, headers={"Authorization": "Bearer nope"})
+    assert bad.status == 403
+    ok = await client.put("/api/settings", json=change, headers=LOCAL)
+    assert ok.status == 200
+    assert (await ok.json())["recently_added_limit"] == 5
+
+
+async def test_events_sends_state_then_pushes(client, engine):
+    async with client.ws_connect("/api/events") as ws:
+        first = await ws.receive_json(timeout=2)
+        assert first["type"] == "state"
+        assert first["data"]["selected_device"] is None
+        engine.events.publish("error", {"message": "boom", "source": "test"})
+        assert await ws.receive_json(timeout=2) == {
+            "type": "error", "data": {"message": "boom", "source": "test"}}
+
+
+async def test_events_unsubscribe_on_close(client, engine):
+    async with client.ws_connect("/api/events") as ws:
+        await ws.receive_json(timeout=2)
+        assert engine.events.subscriber_count == 1
+    for _ in range(100):
+        if engine.events.subscriber_count == 0:
+            break
+        await asyncio.sleep(0.01)
+    assert engine.events.subscriber_count == 0

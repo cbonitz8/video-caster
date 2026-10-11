@@ -69,3 +69,25 @@ src/video_caster/
 - macOS (primary target)
 - Python 3.10+
 - FFmpeg / ffprobe
+
+## Core service (phone and Mac app backend)
+
+A background service that owns casting state and serves the API the phone web app and the
+Mac app use. It listens on `127.0.0.1:8485` only. The terminal app (`video-caster`) is
+separate: don't run both at once, because both would drive the same Chromecast.
+
+Install (once):
+
+```bash
+cp deploy/com.caleb.videocaster.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.caleb.videocaster.plist
+tailscale serve --bg --https=8443 8485
+```
+
+- Phones (tailnet): `https://calebs-macbook-pro.tail02eb7f.ts.net:8443`
+- On the Mac: `http://127.0.0.1:8485` (the Mac can't reach its own tailnet address while the other VPN is up)
+- Logs: `~/Library/Logs/video-caster-core.log`
+- Restart after code changes: `launchctl kickstart -k gui/$(id -u)/com.caleb.videocaster`
+- Local-only actions (open any file, change settings) need `Authorization: Bearer <token>`, where the token is in `~/Library/Application Support/video-caster/core-token`.
+
+Tests: `python3 -m pip install -e ".[dev]" && python3 -m pytest`

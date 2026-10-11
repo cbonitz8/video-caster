@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 video-caster = "video_caster.__main__:main"
+video-caster-core = "video_caster.core.__main__:main"
 
 [project.optional-dependencies]
 dev = [

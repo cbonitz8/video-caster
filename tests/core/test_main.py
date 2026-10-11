@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import socket
+import sys
+
+import pytest
 
 from video_caster.config import Config
-from video_caster.core.__main__ import missing_tools, serve
+from video_caster.core.__main__ import main, missing_tools, serve
 
 
 def test_missing_tools_reports_ffmpeg(monkeypatch, tmp_path):
@@ -22,3 +25,14 @@ async def test_serve_exits_1_when_port_taken(tmp_path, watch_dir):
     finally:
         blocker.close()
     assert code == 1
+    assert not (tmp_path / "core-token").exists()
+
+
+def test_main_logs_path_when_ffmpeg_missing(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["video-caster-core"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    assert "ffmpeg, ffprobe" in caplog.text
+    assert str(tmp_path) in caplog.text

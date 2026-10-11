@@ -14,13 +14,21 @@ from pathlib import Path
 from video_caster.core.errors import Forbidden, Unauthorized
 
 
-def write_token(path: Path) -> str:
-    token = secrets.token_urlsafe(32)
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def save_token(path: Path, token: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(token)
     os.chmod(path, 0o600)  # O_CREAT's mode doesn't apply to an existing file
+
+
+def write_token(path: Path) -> str:
+    token = new_token()
+    save_token(path, token)
     return token
 
 

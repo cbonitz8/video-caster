@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
@@ -27,6 +28,7 @@ LOCAL_NETWORK_BLOCKED = (
 )
 
 COMPLETED_PROGRESS = 0.9
+_UNSAFE_PATH_CHARS = re.compile(r'["\\\x00-\x1f\x7f]')
 
 
 class Orchestrator(Protocol):
@@ -191,16 +193,20 @@ class Engine:
 
     async def _cast(self, path: Path, resume: bool, device: Device) -> None:
         try:
+            await self._release_current("cast")
             await self._orch.cast_file(path, device)
-            self._current_path = path
             status = await self._orch.get_status()
-            self._watch_id = await self.history.record_play(
+            watch_id = await self.history.record_play(
                 file_path=str(path),
                 file_name=path.name,
                 device_id=device.id,
                 device_name=device.name,
                 duration=status.duration,
             )
+            # Set together, with no await between, so a tick never pairs one file's
+            # watch id with another file's position.
+            self._current_path = path
+            self._watch_id = watch_id
             self.events.publish("library_changed", None)
             if resume:
                 saved = await self.history.get_saved_position(str(path))
@@ -262,18 +268,32 @@ class Engine:
         await self._orch.set_volume(self.volume)
 
     async def stop(self) -> None:
-        if self._watch_id is not None:
-            try:
-                status = await self._orch.get_status()
-                if status.current_time > 0:
-                    await self.history.force_update_position(self._watch_id, status.current_time)
-            except Exception as e:
-                log.exception("Couldn't save position before stopping")
-                self.events.publish("error", {"message": f"Couldn't save position: {e}", "source": "stop"})
+        self._pending = None
+        await self._cancel_cast()
+        await self._release_current("stop")
         await self._orch.stop_playback()
+        self.events.publish("library_changed", None)
+
+    async def _cancel_cast(self) -> None:
+        task = self.cast_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _release_current(self, source: str) -> None:
+        """Save the current file's position, then forget it."""
+        watch_id = self._watch_id
         self._watch_id = None
         self._current_path = None
-        self.events.publish("library_changed", None)
+        if watch_id is None:
+            return
+        try:
+            status = await self._orch.get_status()
+            if status.current_time > 0:
+                await self.history.force_update_position(watch_id, status.current_time)
+        except Exception as e:
+            log.exception("Couldn't save position")
+            self.events.publish("error", {"message": f"Couldn't save position: {e}", "source": source})
 
     # -- Lifecycle --
 
@@ -288,13 +308,7 @@ class Engine:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        if self._watch_id is not None:
-            try:
-                status = await self._orch.get_status()
-                if status.current_time > 0:
-                    await self.history.force_update_position(self._watch_id, status.current_time)
-            except Exception:
-                log.exception("Couldn't save position on shutdown")
+        await self._release_current("shutdown")
         await self._orch.stop()
         self.history.close()
 
@@ -343,6 +357,9 @@ class Engine:
             folders = changes["watch_folders"]
             if not isinstance(folders, list) or not all(isinstance(p, str) and p for p in folders):
                 raise BadRequest("watch_folders must be a list of absolute paths")
+            # config.toml stores these as plain TOML strings, so these characters would corrupt it.
+            if any(_UNSAFE_PATH_CHARS.search(p) for p in folders):
+                raise BadRequest("watch_folders paths can't contain quotes, backslashes or control characters")
             paths = [Path(p).expanduser() for p in folders]
             if not all(p.is_absolute() for p in paths):
                 raise BadRequest("watch_folders must be a list of absolute paths")
@@ -353,7 +370,8 @@ class Engine:
                 if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                     raise BadRequest(f"{key} must be a positive integer")
                 updates[key] = value
-        self.config = dataclasses.replace(self.config, **updates)
-        self._persist_config(self.config)
+        candidate = dataclasses.replace(self.config, **updates)
+        self._persist_config(candidate)
+        self.config = candidate
         self.events.publish("library_changed", None)
         return self.settings()

@@ -87,8 +87,23 @@ def test_update_settings_persists(engine, saved_configs, tmp_path):
     {"recently_added_limit": 0},
     {"recently_added_limit": True},
     {"recently_added_days": "7"},
+    {"watch_folders": ['/Volumes/stanley/Bob\'s "Best"']},
+    {"watch_folders": ["/tmp/a\\b"]},
+    {"watch_folders": ["/tmp/a\nb"]},
 ])
 def test_update_settings_rejects_bad_input(engine, saved_configs, changes):
     with pytest.raises(BadRequest):
         engine.update_settings(changes)
     assert saved_configs == []
+
+
+def test_update_settings_keeps_config_when_save_fails(engine):
+    before = engine.config
+
+    def failing_save(config):
+        raise OSError("disk full")
+
+    engine._persist_config = failing_save
+    with pytest.raises(OSError):
+        engine.update_settings({"recently_added_limit": 5})
+    assert engine.config is before

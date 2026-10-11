@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from video_caster.transcoding.formats import VIDEO_EXTENSIONS
+
+log = logging.getLogger(__name__)
 
 
 def is_under(path: Path, folders: list[Path]) -> bool:
@@ -25,10 +28,11 @@ def list_folder(target: Path) -> list[dict]:
         if child.is_dir():
             entries.append({"path": str(child), "name": child.name, "is_dir": True})
         elif child.suffix.lower() in VIDEO_EXTENSIONS:
-            entries.append({
-                "path": str(child),
-                "name": child.name,
-                "is_dir": False,
-                "size": child.stat().st_size,
-            })
+            try:
+                size = child.stat().st_size
+            except OSError as e:
+                # e.g. a symlink into a drive that isn't plugged in
+                log.warning("Skipping unreadable file %s: %s", child, e)
+                continue
+            entries.append({"path": str(child), "name": child.name, "is_dir": False, "size": size})
     return entries

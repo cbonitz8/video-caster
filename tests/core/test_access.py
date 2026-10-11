@@ -68,3 +68,8 @@ def test_require_local():
     with pytest.raises(Forbidden):
         auth.require_local("Bearer nope", "abc")
     auth.require_local("Bearer abc", "abc")
+
+
+def test_list_folder_skips_dangling_symlink(watch_dir, tmp_path):
+    (watch_dir / "gone.mkv").symlink_to(tmp_path / "unplugged" / "gone.mkv")
+    assert [e["name"] for e in paths.list_folder(watch_dir)] == ["Movie.mkv"]

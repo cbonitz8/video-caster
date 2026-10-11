@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from aiohttp import ClientSession, WSServerHandshakeError, web
 from pychromecast.error import RequestTimeout
 
 from video_caster.casting.base import PlaybackStatus
@@ -204,3 +205,56 @@ async def test_events_unsubscribe_on_close(client, engine):
             break
         await asyncio.sleep(0.01)
     assert engine.events.subscriber_count == 0
+
+
+async def test_volume_rejects_huge_integer(client):
+    resp = await client.post(
+        "/api/playback/volume", data='{"level": 1' + "0" * 309 + "}",
+        headers={"Content-Type": "application/json"})
+    assert resp.status == 400
+
+
+async def test_cast_rejects_nul_in_path(client):
+    resp = await client.post("/api/cast", json={"path": "/tmp/a\u0000b.mkv"})
+    assert resp.status == 400
+
+
+async def test_browse_rejects_nul_in_path(client):
+    resp = await client.get("/api/browse", params={"path": "/tmp/a\u0000b"})
+    assert resp.status == 400
+
+
+async def test_rejects_foreign_origin(client, orchestrator):
+    resp = await client.post("/api/playback/toggle", headers={"Origin": "https://evil.example"})
+    assert resp.status == 403
+    assert ("toggle_pause",) not in orchestrator.calls
+
+
+async def test_rejects_foreign_origin_websocket(client):
+    with pytest.raises(WSServerHandshakeError) as exc:
+        await client.ws_connect("/api/events", headers={"Origin": "https://evil.example"})
+    assert exc.value.status == 403
+
+
+async def test_rejects_foreign_host(client):
+    resp = await client.get("/api/library", headers={"Host": "rebind.evil.example:8485"})
+    assert resp.status == 403
+
+
+async def test_allows_tailnet_host_and_origin(aiohttp_client, engine):
+    client = await aiohttp_client(create_app(engine, TOKEN, extra_hosts=("box.example.ts.net",)))
+    resp = await client.get("/api/state", headers={
+        "Host": "box.example.ts.net:8443", "Origin": "https://box.example.ts.net:8443"})
+    assert resp.status == 200
+
+
+async def test_runner_cleanup_closes_event_sockets(engine):
+    runner = web.AppRunner(create_app(engine, TOKEN))
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", 0).start()
+    port = runner.addresses[0][1]
+    async with ClientSession() as session:
+        ws = await session.ws_connect(f"http://127.0.0.1:{port}/api/events")
+        await ws.receive_json(timeout=2)
+        await asyncio.wait_for(runner.cleanup(), timeout=5)
+        await ws.close()

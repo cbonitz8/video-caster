@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from pychromecast.error import RequestTimeout
 
 from video_caster.casting.base import PlaybackStatus
 from video_caster.core.errors import BadRequest
-from tests.conftest import LIVING_ROOM, drain
+from tests.conftest import LIVING_ROOM, drain, make_video
 
 
 async def start_casting(engine, video) -> None:
@@ -115,3 +117,34 @@ async def test_device_timeout_propagates(engine, orchestrator):
     orchestrator.command_error = RequestTimeout("play", 10.0)
     with pytest.raises(RequestTimeout):
         await engine.toggle_pause()
+
+
+async def test_stop_cancels_a_cast_still_loading(engine, orchestrator, video):
+    orchestrator.cast_gate = asyncio.Event()
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    engine.request_cast(video, resume=False)
+    await asyncio.sleep(0)
+    await engine.stop()
+    orchestrator.cast_gate.set()
+    await asyncio.sleep(0)
+    assert engine.cast_task.cancelled()
+    assert engine.state()["current"] is None
+
+
+async def test_stop_forgets_a_waiting_file(engine, video):
+    engine.request_cast(video, resume=False)
+    await engine.stop()
+    assert engine.state()["pending"] is None
+
+
+async def test_failed_replacement_clears_current_and_saves_old_position(
+        engine, orchestrator, history, watch_dir, video):
+    await start_casting(engine, video)
+    orchestrator.status = PlaybackStatus(state="playing", current_time=40.0, duration=100.0)
+    other = make_video(watch_dir / "Other.mkv")
+    orchestrator.cast_error = RuntimeError("LOAD_FAILED")
+    engine.request_cast(other, resume=False)
+    await engine.cast_task
+    assert engine.state()["current"] is None
+    assert await history.get_saved_position(str(video)) == 40.0

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from aiohttp import web
+from aiohttp import WSCloseCode, web
 from pychromecast.error import RequestTimeout
 
 from video_caster.core import auth, paths
@@ -17,6 +19,28 @@ from video_caster.core.errors import BadRequest, EngineError, Forbidden, NotFoun
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _hostname(netloc: str) -> str | None:
+    return urlsplit(f"//{netloc}").hostname
+
+
+def _same_site_middleware(allowed: frozenset[str]):
+    # Any web page open on the Mac can reach 127.0.0.1. Rejecting foreign Origins stops
+    # cross-site requests and sockets; rejecting foreign Hosts stops DNS rebinding.
+    @web.middleware
+    async def middleware(request: web.Request, handler):
+        if _hostname(request.host) not in allowed:
+            log.warning("Refused %s %s for Host %r", request.method, request.path, request.host)
+            return web.json_response({"error": "Host not allowed"}, status=403)
+        origin = request.headers.get("Origin")
+        if origin is not None and _hostname(urlsplit(origin).netloc) not in allowed:
+            log.warning("Refused %s %s from Origin %r", request.method, request.path, origin)
+            return web.json_response({"error": "Origin not allowed"}, status=403)
+        return await handler(request)
+
+    return middleware
 
 
 @web.middleware
@@ -51,15 +75,23 @@ def _number(body: dict, key: str) -> float:
     if key not in body:
         raise BadRequest(f"Missing {key}")
     value = body[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise BadRequest(f"{key} must be a finite number")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise BadRequest(f"{key} must be a finite number") from None
+    if not math.isfinite(number):
+        raise BadRequest(f"{key} must be a finite number")
+    return number
 
 
 def _string(body: dict, key: str) -> str:
     value = body.get(key)
     if not isinstance(value, str) or not value:
         raise BadRequest(f"{key} must be a non-empty string")
+    if "\0" in value:
+        raise BadRequest(f"{key} must not contain NUL characters")
     return value
 
 
@@ -71,6 +103,7 @@ class _Api:
     def __init__(self, engine: Engine, token: str) -> None:
         self.engine = engine
         self.token = token
+        self._sockets: set[web.WebSocketResponse] = set()
 
     async def index(self, request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
@@ -86,6 +119,8 @@ class _Api:
         raw = request.query.get("path")
         if raw is None or raw == "":
             return web.json_response(paths.watch_roots(folders))
+        if "\0" in raw:
+            raise BadRequest("path must not contain NUL characters")
         target = Path(raw)
         if not paths.is_under(target, folders):
             raise Forbidden("Path is not in a watch folder")
@@ -159,6 +194,7 @@ class _Api:
     async def events(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
+        self._sockets.add(ws)
         queue = self.engine.events.subscribe()
         forwarder: asyncio.Task | None = None
         try:
@@ -170,7 +206,14 @@ class _Api:
             if forwarder is not None:
                 forwarder.cancel()
             self.engine.events.unsubscribe(queue)
+            self._sockets.discard(ws)
         return ws
+
+    async def close_sockets(self, app: web.Application) -> None:
+        # Open sockets otherwise hold runner.cleanup() for aiohttp's 60s timeout,
+        # longer than launchd waits before SIGKILL.
+        for ws in list(self._sockets):
+            await ws.close(code=WSCloseCode.GOING_AWAY, message=b"Server shutting down")
 
     @staticmethod
     async def _forward(queue: asyncio.Queue, ws: web.WebSocketResponse) -> None:
@@ -179,9 +222,11 @@ class _Api:
             await ws.send_json(event)
 
 
-def create_app(engine: Engine, token: str) -> web.Application:
+def create_app(engine: Engine, token: str, *, extra_hosts: Iterable[str] = ()) -> web.Application:
     api = _Api(engine, token)
-    app = web.Application(middlewares=[_error_middleware])
+    allowed = frozenset(LOCAL_HOSTS) | frozenset(extra_hosts)
+    app = web.Application(middlewares=[_same_site_middleware(allowed), _error_middleware])
+    app.on_shutdown.append(api.close_sockets)
     r = app.router
     r.add_get("/", api.index)
     r.add_get("/api/state", api.state)

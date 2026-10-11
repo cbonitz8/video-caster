@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, Protocol
 from video_caster import library as lib
 from video_caster.casting.base import PlaybackStatus
 from video_caster.config import Config, save_config
-from video_caster.core.errors import NotFound
+from video_caster.core.errors import BadRequest, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
@@ -24,6 +24,8 @@ LOCAL_NETWORK_BLOCKED = (
     "found. System Settings > Privacy & Security > Local Network: enable Python. If it "
     "is already on, toggle it off and on, then restart the service."
 )
+
+COMPLETED_PROGRESS = 0.9
 
 
 class Orchestrator(Protocol):
@@ -206,3 +208,67 @@ class Engine:
         except Exception as e:
             log.exception("Cast of %s failed", path)
             self.events.publish("error", {"message": f"Cast failed: {e}", "source": "cast"})
+
+    # -- Playback --
+
+    async def tick(self) -> None:
+        try:
+            status = await self._orch.get_status()
+            payload = status_dict(status, self._current_path)
+            if payload != self._last_status or status.state == "playing":
+                self._last_status = payload
+                self.events.publish("status", payload)
+            if self._watch_id is not None and status.current_time > 0:
+                await self.history.update_position(self._watch_id, status.current_time)
+                if status.duration > 0:
+                    await self.history.update_duration(self._watch_id, status.duration)
+                    if status.progress >= COMPLETED_PROGRESS:
+                        await self.history.mark_completed(self._watch_id)
+                        self._watch_id = None
+                        self.events.publish("library_changed", None)
+            self._last_tick_error = None
+        except Exception as e:
+            message = f"Status update failed: {e}"
+            # A vanished device fails every tick; report each distinct failure once.
+            if message != self._last_tick_error:
+                log.exception(message)
+                self.events.publish("error", {"message": message, "source": "status"})
+            self._last_tick_error = message
+
+    async def _tick_loop(self) -> None:
+        while True:
+            await self.tick()
+            await asyncio.sleep(self._tick_interval)
+
+    async def toggle_pause(self) -> None:
+        await self._orch.toggle_pause()
+
+    async def seek(self, position: float | None = None, offset: float | None = None) -> None:
+        if (position is None) == (offset is None):
+            raise BadRequest("Give exactly one of position or offset")
+        if offset is not None:
+            status = await self._orch.get_status()
+            target = max(0.0, status.current_time + offset)
+            if status.duration > 0:
+                target = min(target, status.duration)
+        else:
+            target = max(0.0, position)
+        await self._orch.seek(target)
+
+    async def set_volume(self, level: float) -> None:
+        self.volume = max(0.0, min(1.0, level))
+        await self._orch.set_volume(self.volume)
+
+    async def stop(self) -> None:
+        if self._watch_id is not None:
+            try:
+                status = await self._orch.get_status()
+                if status.current_time > 0:
+                    await self.history.force_update_position(self._watch_id, status.current_time)
+            except Exception as e:
+                log.exception("Couldn't save position before stopping")
+                self.events.publish("error", {"message": f"Couldn't save position: {e}", "source": "stop"})
+        await self._orch.stop_playback()
+        self._watch_id = None
+        self._current_path = None
+        self.events.publish("library_changed", None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
@@ -10,7 +11,7 @@ from typing import Awaitable, Callable, Protocol
 from video_caster import library as lib
 from video_caster.casting.base import PlaybackStatus
 from video_caster.config import Config, save_config
-from video_caster.core.errors import BadRequest, NotFound
+from video_caster.core.errors import BadRequest, Conflict, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
@@ -94,6 +95,7 @@ class Engine:
         self.volume = 1.0
         self.cast_task: asyncio.Task | None = None
         self._scan_task: asyncio.Task | None = None
+        self._tick_task: asyncio.Task | None = None
         self._scan_running = False
         self._scan_warning = ""
         self._current_path: Path | None = None
@@ -272,3 +274,86 @@ class Engine:
         self._watch_id = None
         self._current_path = None
         self.events.publish("library_changed", None)
+
+    # -- Lifecycle --
+
+    async def start(self) -> None:
+        self._orch.pin_callback = self.pin_callback
+        await self._orch.start()
+        self.request_scan()
+        self._tick_task = asyncio.create_task(self._tick_loop())
+
+    async def shutdown(self) -> None:
+        tasks = [t for t in (self._tick_task, self._scan_task, self.cast_task) if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if self._watch_id is not None:
+            try:
+                status = await self._orch.get_status()
+                if status.current_time > 0:
+                    await self.history.force_update_position(self._watch_id, status.current_time)
+            except Exception:
+                log.exception("Couldn't save position on shutdown")
+        await self._orch.stop()
+        self.history.close()
+
+    # -- AirPlay pairing --
+
+    async def pin_callback(self, device_name: str, protocol: str) -> str:
+        if self._pin_future is not None and not self._pin_future.done():
+            raise Conflict("Another pairing is already waiting for a PIN")
+        self._pin_future = asyncio.get_running_loop().create_future()
+        self._pin_request = {"device_name": device_name, "protocol": protocol}
+        self.events.publish("pin_required", self._pin_request)
+        try:
+            return await asyncio.wait_for(self._pin_future, self._pin_timeout)
+        except TimeoutError:
+            raise TimeoutError(
+                f"No PIN entered for {device_name} within {self._pin_timeout:.0f}s"
+            ) from None
+        finally:
+            self._pin_request = None
+            self._pin_future = None
+            self.events.publish("pin_resolved", {"device_name": device_name})
+
+    def submit_pin(self, pin: str) -> None:
+        if self._pin_future is None or self._pin_future.done():
+            raise Conflict("No pairing is waiting for a PIN")
+        self._pin_future.set_result(pin)
+
+    # -- Settings --
+
+    def settings(self) -> dict:
+        return {
+            "watch_folders": [
+                {"path": str(f), "available": f.is_dir()} for f in self.config.watch_folders
+            ],
+            "recently_added_limit": self.config.recently_added_limit,
+            "recently_added_days": self.config.recently_added_days,
+        }
+
+    def update_settings(self, changes: dict) -> dict:
+        allowed = {"watch_folders", "recently_added_limit", "recently_added_days"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise BadRequest(f"Unknown settings: {', '.join(sorted(unknown))}")
+        updates: dict = {}
+        if "watch_folders" in changes:
+            folders = changes["watch_folders"]
+            if not isinstance(folders, list) or not all(isinstance(p, str) and p for p in folders):
+                raise BadRequest("watch_folders must be a list of absolute paths")
+            paths = [Path(p).expanduser() for p in folders]
+            if not all(p.is_absolute() for p in paths):
+                raise BadRequest("watch_folders must be a list of absolute paths")
+            updates["watch_folders"] = paths
+        for key in ("recently_added_limit", "recently_added_days"):
+            if key in changes:
+                value = changes[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise BadRequest(f"{key} must be a positive integer")
+                updates[key] = value
+        self.config = dataclasses.replace(self.config, **updates)
+        self._persist_config(self.config)
+        self.events.publish("library_changed", None)
+        return self.settings()

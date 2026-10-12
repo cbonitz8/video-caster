@@ -55,6 +55,14 @@ def parse_episode(path: Path) -> EpisodeInfo | None:
     return None
 
 
+def _list_dir(directory: Path) -> list[Path]:
+    try:
+        return list(directory.iterdir())
+    except OSError as e:
+        log.warning("Skipping unreadable directory %s: %s", directory, e)
+        return []
+
+
 def find_next_episode(current: Path, directory: Path | None = None) -> Path | None:
     """Find the next episode after `current` in the same directory (or parent)."""
     info = parse_episode(current)
@@ -65,26 +73,21 @@ def find_next_episode(current: Path, directory: Path | None = None) -> Path | No
     if not search_dir.is_dir():
         return None
 
-    # Collect all video files with episode info in this directory and parent
-    candidates: list[EpisodeInfo] = []
-    search_dirs = [search_dir]
-    # Also check sibling season dirs for next season
-    if search_dir.parent.is_dir():
-        search_dirs.append(search_dir.parent)
+    # Only climb to sibling season dirs from a season dir: a flat folder like
+    # ~/Movies would otherwise walk all of $HOME (incl. TCC-blocked ~/.Trash).
+    dirs_to_scan = [search_dir]
+    if _DIR_SEASON.search(search_dir.name):
+        for sibling in _list_dir(search_dir.parent):
+            if sibling != search_dir and sibling.is_dir() and _DIR_SEASON.search(sibling.name):
+                dirs_to_scan.append(sibling)
 
-    for sdir in search_dirs:
-        for child in sdir.iterdir():
+    candidates: list[EpisodeInfo] = []
+    for sdir in dirs_to_scan:
+        for child in _list_dir(sdir):
             if child.is_file() and child.suffix.lower() in VIDEO_EXTENSIONS:
                 ep = parse_episode(child)
                 if ep:
                     candidates.append(ep)
-            elif child.is_dir() and sdir == search_dir.parent:
-                # Look one level into sibling season dirs
-                for grandchild in child.iterdir():
-                    if grandchild.is_file() and grandchild.suffix.lower() in VIDEO_EXTENSIONS:
-                        ep = parse_episode(grandchild)
-                        if ep:
-                            candidates.append(ep)
 
     # Find next: same season + 1 episode, or next season episode 1
     next_same_season = [

@@ -1,3 +1,4 @@
+import errno
 import socket
 import subprocess
 
@@ -35,3 +36,20 @@ def get_local_ip_for(target_ip: str) -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.connect((target_ip, 80))
         return s.getsockname()[0]
+
+
+def multicast_blocked() -> bool:
+    """True if the OS refuses multicast sends from this process.
+
+    macOS returns EHOSTUNREACH for multicast when the responsible app
+    (the terminal) lacks Local Network permission, even while its toggle
+    in System Settings shows on. Discovery then silently finds nothing.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.sendto(b"\0", ("224.0.0.251", 5353))
+        except OSError as e:
+            if e.errno == errno.EHOSTUNREACH:
+                return True
+            raise
+    return False

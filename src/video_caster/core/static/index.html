@@ -2,20 +2,31 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Caster">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
 <title>Video Caster</title>
-<style>
-  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 2rem 1rem; max-width: 40rem; }
-  code { font: 13px ui-monospace, monospace; }
-</style>
+<link rel="stylesheet" href="/static/style.css">
+<script type="module" src="/static/app.js"></script>
 </head>
 <body>
-<h1>Video Caster</h1>
-<p>The core service is running. The phone web app arrives in part 2; until then the API is:</p>
-<ul>
-  <li><code>GET /api/state</code>, <code>/api/library</code>, <code>/api/browse?path=</code>, <code>/api/settings</code></li>
-  <li><code>POST /api/cast</code>, <code>/api/playback/{toggle,stop,seek,volume}</code>, <code>/api/devices/{scan,select}</code>, <code>/api/pairing/pin</code></li>
-  <li><code>GET /api/events</code> (WebSocket)</li>
-</ul>
+<header class="top">
+  <h1>Video Caster</h1>
+  <button id="device-chip" class="chip" type="button">…</button>
+</header>
+<div id="strip" class="strip" hidden>Reconnecting…</div>
+<main>
+  <section id="library-tab"></section>
+  <section id="remote-tab" hidden></section>
+</main>
+<div id="nowbar" class="nowbar" hidden></div>
+<nav class="tabbar">
+  <button type="button" data-tab="library">Library</button>
+  <button type="button" data-tab="remote">Remote</button>
+</nav>
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="sheet-layer" class="sheet-layer" hidden></div>
 </body>
 </html>

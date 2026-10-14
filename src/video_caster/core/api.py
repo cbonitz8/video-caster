@@ -237,6 +237,8 @@ async def _static_headers(request: web.Request, response: web.StreamResponse) ->
     # The phone keeps the app open for days; revalidating makes edits show up on reload.
     if request.path == "/" or request.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
+    if request.path.endswith(".webmanifest"):
+        response.headers["Content-Type"] = "application/manifest+json"
 
 
 def create_app(engine: Engine, token: str, *, extra_hosts: Iterable[str] = ()) -> web.Application:

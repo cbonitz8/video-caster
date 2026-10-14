@@ -329,3 +329,10 @@ async def test_static_files_served_without_cache(client):
     assert resp.status == 200
     assert resp.headers["Cache-Control"] == "no-cache"
     assert (await client.get("/")).headers["Cache-Control"] == "no-cache"
+
+
+async def test_manifest_served_as_manifest_json(client):
+    resp = await client.get("/static/manifest.webmanifest")
+    assert resp.status == 200
+    assert resp.headers["Content-Type"].startswith("application/manifest+json")
+    assert (await client.get("/static/apple-touch-icon.png")).status == 200

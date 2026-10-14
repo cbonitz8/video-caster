@@ -1,7 +1,7 @@
 import { h } from "./dom.js";
 import { formatLeft } from "./util.js";
 import { browseBack, call, openBrowse, tapFile } from "./actions.js";
-import { update } from "./store.js";
+import { nowPlaying, update } from "./store.js";
 
 function fileRow(row, meta, live) {
   return h("button", { class: "row", type: "button", disabled: !live, onclick: () => tapFile(row) },
@@ -77,15 +77,17 @@ export function createNowBar(el) {
 
   return {
     patch(state) {
-      const current = state.server === null ? null : state.server.current;
-      el.hidden = state.tab !== "library" || (state.starting === null && current === null);
+      const now = nowPlaying(state);
+      el.hidden = state.tab !== "library" || now.kind === "idle";
       if (el.hidden) return;
-      if (state.starting !== null) {
-        title.textContent = state.starting.title;
-        sub.textContent = Date.now() - state.starting.since > 30000 ? "Still starting… (TV may be busy)" : "Starting…";
+      if (now.kind === "starting") {
+        title.textContent = now.title;
+        const slow = now.since !== null && Date.now() - now.since > 30000;
+        sub.textContent = slow ? "Still starting… (TV may be busy)" : "Starting…";
         toggle.hidden = true;
         return;
       }
+      const { current } = now;
       title.textContent = current.title;
       sub.textContent = current.subtitle === null ? "" : current.subtitle;
       toggle.hidden = false;

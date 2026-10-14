@@ -1,6 +1,7 @@
 import { h } from "./dom.js";
 import { formatTime, throttle } from "./util.js";
 import { call, playNext } from "./actions.js";
+import { nowPlaying } from "./store.js";
 
 export function createRemote(root) {
   let scrubbing = false;
@@ -8,6 +9,7 @@ export function createRemote(root) {
   let next = null;
 
   const empty = h("p", { class: "empty" }, "Nothing playing. Pick something in Library.");
+  const starting = h("p", { class: "empty" });
   const title = h("h2", { class: "np-title" });
   const sub = h("p", { class: "np-sub" });
   const scrub = h("input", { type: "range", min: 0, max: 0, step: 1, value: 0, "aria-label": "Position" });
@@ -51,14 +53,17 @@ export function createRemote(root) {
     h("div", { class: "volume" }, h("span", { "aria-hidden": "true" }, "🔈"), volume, h("span", { "aria-hidden": "true" }, "🔊")),
     h("div", { class: "actions" }, stop, nextBtn),
   );
-  root.replaceChildren(empty, panel);
+  root.replaceChildren(empty, starting, panel);
 
   return {
     patch(state) {
-      const current = state.server === null ? null : state.server.current;
-      empty.hidden = current !== null;
-      panel.hidden = current === null;
-      if (current === null) return;
+      const now = nowPlaying(state);
+      empty.hidden = now.kind !== "idle";
+      starting.hidden = now.kind !== "starting";
+      panel.hidden = now.kind !== "playing";
+      if (now.kind === "starting") starting.textContent = `Starting ${now.title}…`;
+      if (now.kind !== "playing") return;
+      const { current } = now;
       const { status } = state.server;
       title.textContent = current.title;
       sub.textContent = current.subtitle === null ? "" : current.subtitle;

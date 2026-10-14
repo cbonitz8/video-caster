@@ -18,6 +18,18 @@ export async function refreshLibrary() {
   const result = await get("/api/library");
   if (result.ok) update({ library: result.data });
   else showError(result);
+  const { browse } = getState();
+  if (browse !== null && browse.entries !== null) await reloadBrowse(browse);
+}
+
+function browseUrl(stack) {
+  const here = stack[stack.length - 1];
+  return here.path === null ? "/api/browse" : `/api/browse?path=${encodeURIComponent(here.path)}`;
+}
+
+async function reloadBrowse(browse) {
+  const result = await get(browseUrl(browse.stack));
+  if (result.ok && getState().browse === browse) update({ browse: { ...browse, entries: result.data } });
 }
 
 export function tapFile(row) {
@@ -60,9 +72,7 @@ export async function submitPin(pin) {
 async function loadBrowse(stack) {
   const browse = { stack, entries: null, error: null };
   update({ browse });
-  const here = stack[stack.length - 1];
-  const url = here.path === null ? "/api/browse" : `/api/browse?path=${encodeURIComponent(here.path)}`;
-  const result = await get(url);
+  const result = await get(browseUrl(stack));
   if (getState().browse !== browse) return; // navigated elsewhere while loading
   if (result.ok) {
     update({ browse: { stack, entries: result.data, error: null } });

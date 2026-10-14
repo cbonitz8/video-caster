@@ -12,8 +12,11 @@ export function initialState() {
   };
 }
 
-function arrived(starting, current) {
-  return starting !== null && current !== null && current.path === starting.path;
+const names = (entry, path) => entry !== null && entry.path === path;
+
+function settle(starting, server) {
+  if (starting === null || names(server.current, starting.path)) return null;
+  return names(server.casting, starting.path) || names(server.pending, starting.path) ? starting : null;
 }
 
 function closePin(sheet) {
@@ -26,14 +29,10 @@ export function reduce(state, event) {
     const sheet = data.pin_request !== null
       ? { kind: "pin", device_name: data.pin_request.device_name }
       : closePin(state.sheet);
-    const starting = arrived(state.starting, data.current) ? null : state.starting;
-    return { ...state, server: data, libraryStale: true, sheet, starting };
+    return { ...state, server: data, libraryStale: true, sheet, starting: settle(state.starting, data) };
   }
   if (type === "library_changed") return { ...state, libraryStale: true };
-  if (type === "error") {
-    const starting = data.source === "cast" ? null : state.starting;
-    return { ...state, toast: { message: data.message }, starting };
-  }
+  if (type === "error") return { ...state, toast: { message: data.message } };
   if (state.server === null) throw new Error(`"${type}" event arrived before the state snapshot`);
   const server = state.server;
   switch (type) {
@@ -44,12 +43,10 @@ export function reduce(state, event) {
         ...state,
         server: { ...server, devices: data.devices, selected_device: data.selected_device, scan: data.scan },
       };
-    case "current":
-      return {
-        ...state,
-        server: { ...server, current: data.current, pending: data.pending },
-        starting: arrived(state.starting, data.current) ? null : state.starting,
-      };
+    case "current": {
+      const next = { ...server, current: data.current, pending: data.pending, casting: data.casting };
+      return { ...state, server: next, starting: settle(state.starting, next) };
+    }
     case "pin_required":
       return {
         ...state,
@@ -61,6 +58,15 @@ export function reduce(state, event) {
     default:
       return state;
   }
+}
+
+export function nowPlaying(state) {
+  if (state.starting !== null) return { kind: "starting", title: state.starting.title, since: state.starting.since };
+  const { server } = state;
+  if (server === null) return { kind: "idle" };
+  if (server.casting !== null) return { kind: "starting", title: server.casting.title, since: null };
+  if (server.current !== null) return { kind: "playing", current: server.current };
+  return { kind: "idle" };
 }
 
 let state = initialState();

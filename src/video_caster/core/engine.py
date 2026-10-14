@@ -108,6 +108,7 @@ class Engine:
         self._scan_warning = ""
         self._current_path: Path | None = None
         self._next_path: Path | None = None
+        self._casting: Path | None = None
         self._watch_id: int | None = None
         self._pending: tuple[Path, bool] | None = None
         self._pin_request: dict | None = None
@@ -132,7 +133,8 @@ class Engine:
         pending = None
         if self._pending is not None:
             pending = {**file_entry(self._pending[0]), "resume": self._pending[1]}
-        return {"current": current, "pending": pending}
+        casting = None if self._casting is None else file_entry(self._casting)
+        return {"current": current, "pending": pending, "casting": casting}
 
     def _publish_current(self) -> None:
         self.events.publish("current", self._current_payload())
@@ -202,10 +204,9 @@ class Engine:
     def _start_cast_task(self, path: Path, resume: bool) -> None:
         if self.cast_task is not None and not self.cast_task.done():
             self.cast_task.cancel()
-        had_pending = self._pending is not None
         self._pending = None
-        if had_pending:
-            self._publish_current()
+        self._casting = path
+        self._publish_current()
         self.cast_task = asyncio.create_task(self._cast(path, resume, self.selected_device))
 
     async def _cast(self, path: Path, resume: bool, device: Device) -> None:
@@ -226,6 +227,7 @@ class Engine:
             self._current_path = path
             self._watch_id = watch_id
             self._next_path = next_path
+            self._casting = None
             self._publish_current()
             self.events.publish("library_changed", None)
             if resume:
@@ -236,6 +238,11 @@ class Engine:
         except Exception as e:
             log.exception("Cast of %s failed", path)
             self.events.publish("error", {"message": f"Cast failed: {e}", "source": "cast"})
+        finally:
+            # A replaced cast's task finishes after its successor started; leave the successor's flag.
+            if self._casting is not None and asyncio.current_task() is self.cast_task:
+                self._casting = None
+                self._publish_current()
 
     # -- Playback --
 

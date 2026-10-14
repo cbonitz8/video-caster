@@ -128,14 +128,14 @@ async def test_current_event_tracks_pending_cast_and_stop(engine, video):
     await engine.scan_devices()
     queue = engine.events.subscribe()
     engine.request_cast(video, resume=False)
-    assert last_current(drain(queue)) == {"current": None, "pending": {
+    assert last_current(drain(queue)) == {"current": None, "casting": None, "pending": {
         "path": str(video), "title": "Movie", "subtitle": None, "resume": False}}
     engine.select_device(LIVING_ROOM.id)
     await engine.cast_task
-    assert last_current(drain(queue)) == {"pending": None, "current": {
+    assert last_current(drain(queue)) == {"pending": None, "casting": None, "current": {
         "path": str(video), "title": "Movie", "subtitle": None, "next": None}}
     await engine.stop()
-    assert last_current(drain(queue)) == {"current": None, "pending": None}
+    assert last_current(drain(queue)) == {"current": None, "pending": None, "casting": None}
 
 
 async def test_stop_announces_cleared_pending(engine, video):
@@ -143,7 +143,7 @@ async def test_stop_announces_cleared_pending(engine, video):
     engine.request_cast(video, resume=False)
     queue = engine.events.subscribe()
     await engine.stop()
-    assert last_current(drain(queue)) == {"current": None, "pending": None}
+    assert last_current(drain(queue)) == {"current": None, "pending": None, "casting": None}
 
 
 async def test_current_carries_next_episode(engine, watch_dir):
@@ -170,3 +170,55 @@ async def test_next_episode_needs_a_next(engine, video):
     await engine.cast_task
     with pytest.raises(Conflict, match="No next episode"):
         engine.next_episode()
+
+
+async def test_casting_names_the_file_while_its_cast_is_in_flight(engine, orchestrator, video):
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    orchestrator.cast_gate = asyncio.Event()
+    queue = engine.events.subscribe()
+    engine.request_cast(video, resume=False)
+    await asyncio.sleep(0)
+    assert engine.state()["casting"] == {"path": str(video), "title": "Movie", "subtitle": None}
+    assert last_current(drain(queue))["casting"]["path"] == str(video)
+    orchestrator.cast_gate.set()
+    await engine.cast_task
+    assert engine.state()["casting"] is None
+    assert last_current(drain(queue))["casting"] is None
+
+
+async def test_failed_cast_clears_casting(engine, orchestrator, video):
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    orchestrator.cast_error = RuntimeError("TV said no")
+    queue = engine.events.subscribe()
+    engine.request_cast(video, resume=False)
+    await engine.cast_task
+    assert last_current(drain(queue)) == {"current": None, "pending": None, "casting": None}
+
+
+async def test_stop_mid_cast_clears_casting(engine, orchestrator, video):
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    orchestrator.cast_gate = asyncio.Event()
+    engine.request_cast(video, resume=False)
+    await asyncio.sleep(0)
+    queue = engine.events.subscribe()
+    await engine.stop()
+    assert engine.state()["casting"] is None
+    assert last_current(drain(queue))["casting"] is None
+
+
+async def test_replaced_cast_keeps_the_new_casting(engine, orchestrator, video, watch_dir):
+    other = make_video(watch_dir / "Other.mkv")
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    orchestrator.cast_gate = asyncio.Event()
+    engine.request_cast(video, resume=False)
+    await asyncio.sleep(0)
+    engine.request_cast(other, resume=False)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert engine.state()["casting"]["path"] == str(other)
+    orchestrator.cast_gate.set()
+    await engine.cast_task

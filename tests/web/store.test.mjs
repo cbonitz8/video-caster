@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { initialState, reduce } from "../../src/video_caster/core/static/store.js";
+import { initialState, nowPlaying, reduce } from "../../src/video_caster/core/static/store.js";
 
 const snapshot = (overrides = {}) => ({
   status: { state: "idle", current_time: 0, duration: 0, volume: 1, title: "" },
   devices: [], selected_device: null, scan: { running: false, warning: "" },
-  current: null, pending: null, pin_request: null,
+  current: null, pending: null, casting: null, pin_request: null,
   ...overrides,
 });
 const ted = { path: "/tv/ted5.mkv", title: "Ted Lasso", subtitle: "S04E05", next: null };
@@ -42,13 +42,27 @@ test("devices merges into server", () => {
   assert.deepEqual(s.server.scan, data.scan);
 });
 
-test("current merges and clears starting for the tapped path only", () => {
+test("current keeps starting while the server is casting or queueing that path", () => {
   const before = { ...live(), starting: starting(ted.path) };
-  const other = reduce(before, { type: "current", data: { current: { ...ted, path: "/tv/old.mkv" }, pending: null } });
-  assert.notEqual(other.starting, null);
-  const arrived = reduce(before, { type: "current", data: { current: ted, pending: null } });
+  const casting = reduce(before, { type: "current", data: { current: null, pending: null, casting: ted } });
+  assert.notEqual(casting.starting, null);
+  const queued = reduce(before, { type: "current", data: { current: null, casting: null, pending: { ...ted, resume: false } } });
+  assert.notEqual(queued.starting, null);
+  const arrived = reduce(casting, { type: "current", data: { current: ted, pending: null, casting: null } });
   assert.equal(arrived.starting, null);
   assert.deepEqual(arrived.server.current, ted);
+});
+
+test("current clears starting once nothing on the server names that path", () => {
+  const before = { ...live(), starting: starting(ted.path) };
+  const other = { ...ted, path: "/tv/emily.mkv" };
+  const s = reduce(before, { type: "current", data: { current: other, pending: null, casting: null } });
+  assert.equal(s.starting, null);
+});
+
+test("a wake-up snapshot clears a starting whose cast died while asleep", () => {
+  const before = { ...live(), starting: starting(ted.path) };
+  assert.equal(reduce(before, { type: "state", data: snapshot() }).starting, null);
 });
 
 test("a playing status never clears starting", () => {
@@ -71,13 +85,20 @@ test("library_changed marks the library stale", () => {
   assert.equal(reduce({ ...live(), libraryStale: false }, { type: "library_changed", data: null }).libraryStale, true);
 });
 
-test("errors toast; only cast errors clear starting", () => {
+test("errors toast and leave starting to the server's casting state", () => {
   const before = { ...live(), starting: starting(ted.path) };
   const cast = reduce(before, { type: "error", data: { message: "Cast failed: x", source: "cast" } });
   assert.deepEqual(cast.toast, { message: "Cast failed: x" });
-  assert.equal(cast.starting, null);
-  const tick = reduce(before, { type: "error", data: { message: "Status update failed", source: "status" } });
-  assert.notEqual(tick.starting, null);
+  assert.notEqual(cast.starting, null);
+});
+
+test("nowPlaying prefers the local starting, then the server's casting, then current", () => {
+  assert.deepEqual(nowPlaying(initialState()), { kind: "idle" });
+  assert.deepEqual(nowPlaying(live()), { kind: "idle" });
+  const mine = { ...live({ current: ted }), starting: { path: "/tv/x.mkv", title: "X", since: 5 } };
+  assert.deepEqual(nowPlaying(mine), { kind: "starting", title: "X", since: 5 });
+  assert.deepEqual(nowPlaying(live({ casting: ted })), { kind: "starting", title: "Ted Lasso", since: null });
+  assert.deepEqual(nowPlaying(live({ current: ted })), { kind: "playing", current: ted });
 });
 
 test("a server event before the snapshot is an error", () => {

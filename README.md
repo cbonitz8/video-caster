@@ -85,9 +85,10 @@ tailscale serve --bg --https=8443 8485
 ```
 
 - Phones (tailnet): `https://calebs-macbook-pro.tail02eb7f.ts.net:8443`
+  Open it in Safari and use Share → Add to Home Screen for the phone app (Library + Remote).
 - On the Mac: `http://127.0.0.1:8485` (the Mac can't reach its own tailnet address while the other VPN is up)
 - Logs: `~/Library/Logs/video-caster-core.log`
 - Restart after code changes: `launchctl kickstart -k gui/$(id -u)/com.caleb.videocaster`
 - Local-only actions (open any file, change settings) need `Authorization: Bearer <token>`, where the token is in `~/Library/Application Support/video-caster/core-token`.
 
-Tests: `python3 -m pip install -e ".[dev]" && python3 -m pytest`
+Tests: `python3 -m pip install -e ".[dev]" && python3 -m pytest`, and for the phone app's JS: `node --test tests/web/*.test.mjs`

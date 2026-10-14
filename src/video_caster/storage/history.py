@@ -190,6 +190,26 @@ class HistoryStore:
     async def get_saved_position(self, file_path: str) -> float:
         return await self._run(self._get_saved_position, file_path)
 
+    def _positions_for(self, file_paths: list[str]) -> dict[str, float]:
+        conn = self._get_conn()
+        positions: dict[str, float] = {}
+        for start in range(0, len(file_paths), 500):
+            chunk = file_paths[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                "SELECT file_path, position FROM watch_history "
+                f"WHERE completed = 0 AND position > 0 AND file_path IN ({marks}) "
+                "ORDER BY last_updated_at",
+                chunk,
+            ).fetchall()
+            for r in rows:
+                positions[r["file_path"]] = r["position"]  # oldest first, so the newest wins
+        return positions
+
+    async def positions_for(self, file_paths: list[str]) -> dict[str, float]:
+        """Saved positions of the in-progress files among file_paths; others are absent."""
+        return await self._run(self._positions_for, file_paths)
+
     def _has_file(self, file_path: str) -> bool:
         conn = self._get_conn()
         row = conn.execute(

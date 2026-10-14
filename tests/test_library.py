@@ -49,3 +49,29 @@ async def test_newly_added_skips_missing_folder(watch_dir, tmp_path):
     assert [i["name"] for i in items] == ["Movie.mkv"]
     assert items[0]["path"] == str(watch_dir / "Movie.mkv")
     assert items[0]["size"] == 1
+
+
+async def test_positions_for_only_in_progress(history, watch_dir):
+    playing = make_video(watch_dir / "a.mkv")
+    finished = make_video(watch_dir / "b.mkv")
+    unstarted = make_video(watch_dir / "c.mkv")
+    wid = await history.record_play(str(playing), playing.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 30.0)
+    wid = await history.record_play(str(finished), finished.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 95.0)
+    await history.mark_completed(wid)
+    await history.record_play(str(unstarted), unstarted.name, "dev", "Living Room", 100.0)
+    paths = [str(p) for p in (playing, finished, unstarted, watch_dir / "never.mkv")]
+    assert await history.positions_for(paths) == {str(playing): 30.0}
+
+
+async def test_positions_for_empty_list(history):
+    assert await history.positions_for([]) == {}
+
+
+async def test_positions_for_more_paths_than_sqlite_parameters(history, watch_dir):
+    last = make_video(watch_dir / "last.mkv")
+    wid = await history.record_play(str(last), last.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 7.0)
+    paths = [str(watch_dir / f"f{i}.mkv") for i in range(1200)] + [str(last)]
+    assert await history.positions_for(paths) == {str(last): 7.0}

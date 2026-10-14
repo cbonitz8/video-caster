@@ -142,6 +142,14 @@ class _Api:
         body = await _json_body(request)
         return web.json_response(self.engine.update_settings(body))
 
+    async def _check_cast_path(self, path: Path, local: bool) -> None:
+        if not local:
+            in_folder = paths.is_under(path, self.engine.config.watch_folders)
+            if not in_folder and not await self.engine.is_in_history(path):
+                raise Forbidden("Path is not in a watch folder")
+        if not path.is_file():
+            raise NotFound("File not found")
+
     async def cast(self, request: web.Request) -> web.Response:
         local = auth.is_local(request.headers.get("Authorization"), self.token)
         body = await _json_body(request)
@@ -151,13 +159,14 @@ class _Api:
             raise BadRequest("resume must be true or false")
         if not path.is_absolute():
             raise BadRequest("path must be absolute")
-        if not local:
-            in_folder = paths.is_under(path, self.engine.config.watch_folders)
-            if not in_folder and not await self.engine.is_in_history(path):
-                raise Forbidden("Path is not in a watch folder")
-        if not path.is_file():
-            raise NotFound("File not found")
+        await self._check_cast_path(path, local)
         return web.json_response(self.engine.request_cast(path, resume), status=202)
+
+    async def play_next(self, request: web.Request) -> web.Response:
+        local = auth.is_local(request.headers.get("Authorization"), self.token)
+        path = self.engine.next_episode()
+        await self._check_cast_path(path, local)
+        return web.json_response(self.engine.request_cast(path, False), status=202)
 
     async def toggle(self, request: web.Request) -> web.Response:
         await self.engine.toggle_pause()
@@ -224,11 +233,18 @@ class _Api:
             await ws.send_json(event)
 
 
+async def _static_headers(request: web.Request, response: web.StreamResponse) -> None:
+    # The phone keeps the app open for days; revalidating makes edits show up on reload.
+    if request.path == "/" or request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+
+
 def create_app(engine: Engine, token: str, *, extra_hosts: Iterable[str] = ()) -> web.Application:
     api = _Api(engine, token)
     allowed = frozenset(LOCAL_HOSTS) | frozenset(extra_hosts)
     app = web.Application(middlewares=[_same_site_middleware(allowed), _error_middleware])
     app.on_shutdown.append(api.close_sockets)
+    app.on_response_prepare.append(_static_headers)
     r = app.router
     r.add_get("/", api.index)
     r.add_get("/api/state", api.state)
@@ -241,8 +257,10 @@ def create_app(engine: Engine, token: str, *, extra_hosts: Iterable[str] = ()) -
     r.add_post("/api/playback/stop", api.stop)
     r.add_post("/api/playback/seek", api.seek)
     r.add_post("/api/playback/volume", api.volume)
+    r.add_post("/api/playback/next", api.play_next)
     r.add_post("/api/devices/scan", api.scan)
     r.add_post("/api/devices/select", api.select_device)
     r.add_post("/api/pairing/pin", api.pin)
     r.add_get("/api/events", api.events)
+    r.add_static("/static/", STATIC_DIR)
     return app

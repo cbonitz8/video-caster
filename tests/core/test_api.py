@@ -272,3 +272,60 @@ async def test_browse_entries_have_titles_and_positions(client, history, watch_d
     assert by_name["Show.S01E02.Second.mkv"]["position"] == 12.0
     assert by_name["Movie.mkv"]["title"] == "Movie"
     assert by_name["Movie.mkv"]["position"] is None
+
+
+async def start_playing(client, engine, path, headers=None):
+    engine.select_device(LIVING_ROOM.id)
+    resp = await client.post("/api/cast", json={"path": str(path)}, headers=headers)
+    assert resp.status == 202
+    await engine.cast_task
+
+
+async def test_next_with_nothing_playing_is_409(client):
+    resp = await client.post("/api/playback/next")
+    assert (resp.status, await resp.json()) == (409, {"error": "Nothing is playing"})
+
+
+async def test_next_without_next_episode_is_409(client, engine, video):
+    await start_playing(client, engine, video)
+    resp = await client.post("/api/playback/next")
+    assert (resp.status, await resp.json()) == (409, {"error": "No next episode"})
+
+
+async def test_next_casts_next_episode_from_the_start(client, engine, orchestrator, history, watch_dir):
+    e1 = make_video(watch_dir / "Show.S01E01.mkv")
+    e2 = make_video(watch_dir / "Show.S01E02.mkv")
+    wid = await history.record_play(str(e2), e2.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 40.0)
+    await start_playing(client, engine, e1)
+    resp = await client.post("/api/playback/next")
+    assert (resp.status, await resp.json()) == (202, {"status": "casting", "device": "Living Room"})
+    await engine.cast_task
+    assert ("cast_file", e2, LIVING_ROOM.id) in orchestrator.calls
+    assert ("seek", 40.0) not in orchestrator.calls
+    assert engine.state()["current"]["path"] == str(e2)
+
+
+async def test_next_outside_watch_folders_needs_local_token(client, engine, tmp_path):
+    e1 = make_video(tmp_path / "elsewhere" / "Show.S01E01.mkv")
+    make_video(tmp_path / "elsewhere" / "Show.S01E02.mkv")
+    await start_playing(client, engine, e1, headers=LOCAL)
+    assert (await client.post("/api/playback/next")).status == 403
+    assert (await client.post("/api/playback/next", headers=LOCAL)).status == 202
+    await engine.cast_task
+
+
+async def test_next_episode_deleted_is_404(client, engine, watch_dir):
+    e1 = make_video(watch_dir / "Show.S01E01.mkv")
+    e2 = make_video(watch_dir / "Show.S01E02.mkv")
+    await start_playing(client, engine, e1)
+    e2.unlink()
+    resp = await client.post("/api/playback/next")
+    assert (resp.status, await resp.json()) == (404, {"error": "File not found"})
+
+
+async def test_static_files_served_without_cache(client):
+    resp = await client.get("/static/index.html")
+    assert resp.status == 200
+    assert resp.headers["Cache-Control"] == "no-cache"
+    assert (await client.get("/")).headers["Cache-Control"] == "no-cache"

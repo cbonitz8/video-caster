@@ -16,7 +16,9 @@ from video_caster.core.errors import BadRequest, Conflict, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
+from video_caster.storage.episode import find_next_episode
 from video_caster.storage.history import HistoryStore
+from video_caster.titles import display_title
 from video_caster.utils.network import multicast_blocked
 
 log = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ class Orchestrator(Protocol):
 def status_dict(status: PlaybackStatus, current_path: Path | None) -> dict:
     title = status.title
     if not title and current_path is not None:
-        title = current_path.stem
+        title = display_title(current_path)["title"]
     return {
         "state": status.state,
         "current_time": status.current_time,
@@ -55,6 +57,10 @@ def status_dict(status: PlaybackStatus, current_path: Path | None) -> dict:
         "volume": status.volume,
         "title": title,
     }
+
+
+def file_entry(path: Path) -> dict:
+    return {"path": str(path), **display_title(path)}
 
 
 def device_dict(device: Device) -> dict:
@@ -101,6 +107,7 @@ class Engine:
         self._scan_running = False
         self._scan_warning = ""
         self._current_path: Path | None = None
+        self._next_path: Path | None = None
         self._watch_id: int | None = None
         self._pending: tuple[Path, bool] | None = None
         self._pin_request: dict | None = None
@@ -117,18 +124,24 @@ class Engine:
             "scan": {"running": self._scan_running, "warning": self._scan_warning},
         }
 
-    def state(self) -> dict:
+    def _current_payload(self) -> dict:
         current = None
         if self._current_path is not None:
-            current = {"path": str(self._current_path), "title": self._current_path.stem}
+            nxt = None if self._next_path is None else file_entry(self._next_path)
+            current = {**file_entry(self._current_path), "next": nxt}
         pending = None
         if self._pending is not None:
-            pending = {"path": str(self._pending[0]), "resume": self._pending[1]}
+            pending = {**file_entry(self._pending[0]), "resume": self._pending[1]}
+        return {"current": current, "pending": pending}
+
+    def _publish_current(self) -> None:
+        self.events.publish("current", self._current_payload())
+
+    def state(self) -> dict:
         return {
             "status": self._last_status,
             **self._devices_payload(),
-            "current": current,
-            "pending": pending,
+            **self._current_payload(),
             "pin_request": self._pin_request,
         }
 
@@ -181,6 +194,7 @@ class Engine:
     def request_cast(self, path: Path, resume: bool) -> dict:
         if self.selected_device is None:
             self._pending = (path, resume)
+            self._publish_current()
             return {"status": "waiting_for_device", "device": None}
         self._start_cast_task(path, resume)
         return {"status": "casting", "device": self.selected_device.name}
@@ -188,7 +202,10 @@ class Engine:
     def _start_cast_task(self, path: Path, resume: bool) -> None:
         if self.cast_task is not None and not self.cast_task.done():
             self.cast_task.cancel()
+        had_pending = self._pending is not None
         self._pending = None
+        if had_pending:
+            self._publish_current()
         self.cast_task = asyncio.create_task(self._cast(path, resume, self.selected_device))
 
     async def _cast(self, path: Path, resume: bool, device: Device) -> None:
@@ -196,6 +213,7 @@ class Engine:
             await self._release_current("cast")
             await self._orch.cast_file(path, device)
             status = await self._orch.get_status()
+            next_path = await asyncio.to_thread(find_next_episode, path)
             watch_id = await self.history.record_play(
                 file_path=str(path),
                 file_name=path.name,
@@ -207,6 +225,8 @@ class Engine:
             # watch id with another file's position.
             self._current_path = path
             self._watch_id = watch_id
+            self._next_path = next_path
+            self._publish_current()
             self.events.publish("library_changed", None)
             if resume:
                 saved = await self.history.get_saved_position(str(path))
@@ -263,12 +283,22 @@ class Engine:
             target = max(0.0, position)
         await self._orch.seek(target)
 
+    def next_episode(self) -> Path:
+        if self._current_path is None:
+            raise Conflict("Nothing is playing")
+        if self._next_path is None:
+            raise Conflict("No next episode")
+        return self._next_path
+
     async def set_volume(self, level: float) -> None:
         self.volume = max(0.0, min(1.0, level))
         await self._orch.set_volume(self.volume)
 
     async def stop(self) -> None:
+        had_pending = self._pending is not None
         self._pending = None
+        if had_pending:
+            self._publish_current()
         await self._cancel_cast()
         await self._release_current("stop")
         await self._orch.stop_playback()
@@ -283,8 +313,12 @@ class Engine:
     async def _release_current(self, source: str) -> None:
         """Save the current file's position, then forget it."""
         watch_id = self._watch_id
+        had_current = self._current_path is not None
         self._watch_id = None
         self._current_path = None
+        self._next_path = None
+        if had_current:
+            self._publish_current()
         if watch_id is None:
             return
         try:

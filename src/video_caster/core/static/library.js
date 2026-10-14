@@ -1,76 +1,100 @@
 import { h } from "./dom.js";
-import { formatLeft } from "./util.js";
+import { episodeParts, formatLeft } from "./util.js";
 import { browseBack, call, openBrowse, tapFile } from "./actions.js";
 import { nowPlaying, update } from "./store.js";
 
-function fileRow(row, meta, live) {
-  return h("button", { class: "row", type: "button", disabled: !live, onclick: () => tapFile(row) },
-    h("span", { class: "row-title" }, row.title),
-    row.subtitle === null ? null : h("span", { class: "row-sub" }, row.subtitle),
-    meta,
-  );
+function subtitleLine(subtitle) {
+  const parts = episodeParts(subtitle);
+  if (parts === null) return h("span", { class: "mga-row__sub" }, subtitle);
+  return h("span", { class: "mga-row__sub" },
+    h("span", { class: "mga-row__code" }, parts.code),
+    parts.name === null ? null : ` · ${parts.name}`);
+}
+
+function blocks(progress) {
+  const on = progress > 0 ? Math.max(1, Math.round(progress * 10)) : 0;
+  return h("span", { class: "mga-blocks", "aria-hidden": "true" },
+    Array.from({ length: 10 }, (_, i) => h("i", { class: i < on ? "on" : "" })));
+}
+
+function fileRow(row, extra, meta, live) {
+  return h("button", { class: "mga-row", type: "button", disabled: !live, onclick: () => tapFile(row) },
+    h("span", { class: "mga-row__text" },
+      h("span", { class: "mga-row__title" }, row.title),
+      row.subtitle === null ? null : subtitleLine(row.subtitle),
+      extra),
+    h("span", { class: "mga-row__meta" }, meta));
 }
 
 function folderRow(label, folder, live) {
-  return h("button", { class: "row", type: "button", disabled: !live, onclick: () => openBrowse(folder) },
-    h("span", { class: "row-title" }, label));
+  return h("button", { class: "mga-row", type: "button", disabled: !live, onclick: () => openBrowse(folder) },
+    h("span", { class: "mga-row__text" }, h("span", { class: "mga-row__title mga-row__folder" }, label)),
+    h("span", { class: "mga-row__meta" }, "▸"));
+}
+
+function count(n) {
+  return h("span", { class: "mga-sectionbar__aside" }, String(n).padStart(2, "0"));
 }
 
 function section(title, rows) {
   if (rows.length === 0) return null;
-  return h("div", {}, h("h2", { class: "section-head" }, title), rows);
+  return h("section", { class: "lib-section" },
+    h("h2", { class: "mga-sectionbar" }, title, count(rows.length)),
+    h("div", { class: "mga-list" }, rows));
 }
 
-function progressMeta(row) {
-  if (row.duration <= 0) return null;
-  return [
-    h("div", { class: "bar" }, h("span", { style: `width:${Math.round(row.progress * 100)}%` })),
-    h("span", { class: "row-meta" }, formatLeft(row.position, row.duration)),
-  ];
+function continueRow(row, live) {
+  if (row.duration <= 0) return fileRow(row, null, "", live);
+  return fileRow(row, blocks(row.progress), formatLeft(row.position, row.duration), live);
 }
 
-function upNextMeta(row) {
+function upNextRow(row, live) {
   const watched = row.watched.subtitle === null ? row.watched.title : row.watched.subtitle;
-  return h("span", { class: "row-meta" }, `after ${watched}`);
+  return fileRow(row, h("span", { class: "mga-row__sub" }, `After ${watched}`), "", live);
 }
 
 function home(library, live) {
-  return h("div", {},
-    section("Continue Watching", library.continue_watching.map((r) => fileRow(r, progressMeta(r), live))),
-    section("Up Next", library.up_next.map((r) => fileRow(r, upNextMeta(r), live))),
-    section("Newly Added", library.newly_added.map((r) =>
-      fileRow(r, h("span", { class: "row-meta" }, r.mtime_ago), live))),
-    h("h2", { class: "section-head" }, "Everything"),
-    folderRow("Browse folders", { path: null, name: "Folders" }, live),
+  return h("div", { class: "lib" },
+    section("Continue Watching", library.continue_watching.map((r) => continueRow(r, live))),
+    section("Up Next", library.up_next.map((r) => upNextRow(r, live))),
+    section("Newly Added", library.newly_added.map((r) => fileRow(r, null, r.mtime_ago, live))),
+    h("section", { class: "lib-section" },
+      h("h2", { class: "mga-sectionbar" }, "Everything"),
+      h("div", { class: "mga-list" }, folderRow("Browse folders", { path: null, name: "Folders" }, live))),
   );
+}
+
+function empty(text) {
+  return h("p", { class: "empty mga-halftone" }, text);
 }
 
 function browse(state, live) {
   const { stack, entries, error } = state.browse;
-  const head = h("div", { class: "browse-head" },
-    h("button", { class: "back", type: "button", "aria-label": "Back", onclick: browseBack }, "‹"),
-    h("h2", { class: "section-head" }, stack[stack.length - 1].name));
-  if (error !== null) return h("div", {}, head, h("p", { class: "empty" }, "Couldn't open this folder."));
-  if (entries === null) return h("div", {}, head, h("p", { class: "empty" }, "Loading…"));
-  if (entries.length === 0) return h("div", {}, head, h("p", { class: "empty" }, "No videos here."));
-  return h("div", {}, head, entries.map((e) => (e.is_dir
-    ? folderRow(`📁 ${e.name}`, { path: e.path, name: e.name }, live)
-    : fileRow(e, null, live))));
+  const head = h("div", { class: "browse-bar" },
+    h("button", { class: "browse-back", type: "button", "aria-label": "Back", onclick: browseBack }, "◀"),
+    h("h2", { class: "mga-sectionbar browse-title" }, stack[stack.length - 1].name,
+      entries === null ? null : count(entries.length)));
+  if (error !== null) return h("div", { class: "lib-section" }, head, empty("Couldn't open this folder."));
+  if (entries === null) return h("div", { class: "lib-section" }, head, empty("Loading…"));
+  if (entries.length === 0) return h("div", { class: "lib-section" }, head, empty("No videos here."));
+  return h("div", { class: "lib-section" }, head, h("div", { class: "mga-list" }, entries.map((e) => (e.is_dir
+    ? folderRow(e.name, { path: e.path, name: e.name }, live)
+    : fileRow(e, null, "", live)))));
 }
 
 export function renderLibrary(state) {
   const live = state.conn === "live";
   if (state.browse !== null) return browse(state, live);
-  if (state.library === null) return h("p", { class: "empty" }, "Loading…");
+  if (state.library === null) return empty("Loading…");
   return home(state.library, live);
 }
 
 export function createNowBar(el) {
-  const title = h("span", { class: "row-title" });
-  const sub = h("span", { class: "row-sub" });
-  const text = h("button", { class: "nowbar-text", type: "button", onclick: () => update({ tab: "remote" }) }, title, sub);
+  const label = h("span", { class: "nowbar-label" });
+  const title = h("span", { class: "nowbar-title" });
+  const text = h("button", { class: "nowbar-text", type: "button", onclick: () => update({ tab: "remote" }) }, label, title);
   const toggle = h("button", {
-    class: "icon-btn", type: "button", "aria-label": "Play or pause",
+    class: "nowbar-toggle", type: "button", "aria-label": "Play or pause",
     onclick: () => call("/api/playback/toggle"),
   });
   el.replaceChildren(text, toggle);
@@ -81,17 +105,17 @@ export function createNowBar(el) {
       el.hidden = state.tab !== "library" || now.kind === "idle";
       if (el.hidden) return;
       if (now.kind === "starting") {
-        title.textContent = now.title;
         const slow = now.since !== null && Date.now() - now.since > 30000;
-        sub.textContent = slow ? "Still starting… (TV may be busy)" : "Starting…";
+        label.textContent = slow ? "Still starting… TV may be busy" : "Starting…";
+        title.textContent = now.title;
         toggle.hidden = true;
         return;
       }
       const { current } = now;
+      label.textContent = current.subtitle === null ? "Now playing" : `Now playing · ${current.subtitle}`;
       title.textContent = current.title;
-      sub.textContent = current.subtitle === null ? "" : current.subtitle;
       toggle.hidden = false;
-      toggle.textContent = state.server.status.state === "playing" ? "⏸" : "▶";
+      toggle.textContent = state.server.status.state === "playing" ? "❚❚" : "▶";
       toggle.disabled = state.conn !== "live";
     },
   };

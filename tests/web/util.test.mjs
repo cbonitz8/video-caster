@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backoffDelay, formatLeft, formatTime, throttle } from "../../src/video_caster/core/static/util.js";
+import { backoffDelay, episodeParts, formatLeft, formatTime, throttle } from "../../src/video_caster/core/static/util.js";
 
 test("backoff doubles from 1s and caps at 10s", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(backoffDelay), [1000, 2000, 4000, 8000, 10000, 10000]);
@@ -29,4 +29,11 @@ test("throttle passes the first and last call of a burst", (t) => {
   assert.deepEqual(calls, [1]);
   t.mock.timers.tick(200);
   assert.deepEqual(calls, [1, 3]);
+});
+
+test("episodeParts splits a subtitle into code, episode number and name", () => {
+  assert.deepEqual(episodeParts("S04E05 · Riches of Embarrassment"),
+    { code: "S04E05", episode: "05", name: "Riches of Embarrassment" });
+  assert.deepEqual(episodeParts("S01E12"), { code: "S01E12", episode: "12", name: null });
+  assert.equal(episodeParts(null), null);
 });

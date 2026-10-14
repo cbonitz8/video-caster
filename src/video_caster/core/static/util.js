@@ -37,3 +37,12 @@ export function throttle(fn, ms) {
     }
   };
 }
+
+const EPISODE_SUBTITLE = /^(S\d+E(\d+))(?: · (.+))?$/;
+
+export function episodeParts(subtitle) {
+  if (subtitle === null) return null;
+  const match = EPISODE_SUBTITLE.exec(subtitle);
+  if (match === null) return null;
+  return { code: match[1], episode: match[2], name: match[3] === undefined ? null : match[3] };
+}

@@ -9,31 +9,44 @@ function deviceType(device) {
   return device.device_type in DEVICE_TYPES ? DEVICE_TYPES[device.device_type] : device.device_type;
 }
 
+function choice(label, { primary = false, disabled, onclick, meta = null }) {
+  return h("button", {
+    class: primary ? "mga-dialogue__choice is-primary" : "mga-dialogue__choice", type: "button", disabled, onclick,
+  }, h("span", { class: "choice-label" }, label), meta === null ? null : h("span", { class: "choice-meta" }, meta));
+}
+
+function dialogue(speaker, lines, actions) {
+  return h("div", { class: "mga-dialogue" },
+    h("span", { class: "mga-dialogue__tab" }, speaker),
+    h("div", { class: "mga-dialogue__box" },
+      lines.map((line) => h("p", { class: "mga-dialogue__line" }, line)),
+      h("div", { class: "mga-dialogue__actions" }, actions)));
+}
+
 function resumeSheet(row, live) {
-  return [
-    h("h2", {}, row.title),
-    row.subtitle === null ? null : h("p", {}, row.subtitle),
-    h("button", { class: "btn primary", type: "button", disabled: !live, onclick: () => castFile(row, true) },
-      `Resume at ${formatTime(row.position)}`),
-    h("button", { class: "btn", type: "button", disabled: !live, onclick: () => castFile(row, false) }, "Start over"),
-  ];
+  const speaker = row.subtitle === null ? row.title : `${row.title} · ${row.subtitle}`;
+  return dialogue(speaker, [`You stopped at ${formatTime(row.position)}. Pick up where you left off?`], [
+    choice(`Resume at ${formatTime(row.position)}`, { primary: true, disabled: !live, onclick: () => castFile(row, true) }),
+    choice("Start over", { disabled: !live, onclick: () => castFile(row, false) }),
+  ]);
 }
 
 function devicesSheet(server, live) {
   const { scan } = server;
-  return [
-    h("h2", {}, server.pending === null ? "Choose a TV" : `Choose a TV for ${server.pending.title}`),
-    scan.warning === "" ? null : h("p", {}, scan.warning),
-    server.devices.length === 0 && !scan.running ? h("p", {}, "No devices found.") : null,
-    server.devices.map((d) => h("button", {
-      class: "btn device", type: "button", disabled: !live, onclick: () => selectDevice(d.id),
-    },
-      h("span", {}, d.name),
-      h("span", { class: "row-meta" }, d.id === server.selected_device ? `✓ ${deviceType(d)}` : deviceType(d)))),
-    h("button", {
-      class: "btn", type: "button", disabled: !live || scan.running, onclick: () => call("/api/devices/scan"),
-    }, scan.running ? "Scanning…" : "Scan again"),
-  ];
+  const lines = [server.pending === null ? "Choose a TV." : `Choose a TV for ${server.pending.title}.`];
+  if (scan.warning !== "") lines.push(scan.warning);
+  if (server.devices.length === 0 && !scan.running) lines.push("No devices found.");
+  return dialogue("Devices", lines, [
+    server.devices.map((d) => choice(d.name, {
+      primary: d.id === server.selected_device,
+      disabled: !live,
+      onclick: () => selectDevice(d.id),
+      meta: d.id === server.selected_device ? `✓ ${deviceType(d)}` : deviceType(d),
+    })),
+    choice(scan.running ? "Scanning…" : "Scan again", {
+      disabled: !live || scan.running, onclick: () => call("/api/devices/scan"),
+    }),
+  ]);
 }
 
 function pinSheet(sheet, live) {
@@ -44,10 +57,14 @@ function pinSheet(sheet, live) {
     e.preventDefault();
     submitPin(input.value.trim());
   };
-  return [
-    h("h2", {}, `Enter the PIN shown on ${sheet.device_name}`),
-    h("form", { onsubmit }, input, h("button", { class: "btn primary", type: "submit", disabled: !live }, "Submit")),
-  ];
+  return h("div", { class: "mga-dialogue" },
+    h("span", { class: "mga-dialogue__tab" }, sheet.device_name),
+    h("form", { class: "mga-dialogue__box", onsubmit },
+      h("p", { class: "mga-dialogue__line" }, "Enter the PIN shown on the TV."),
+      h("div", { class: "mga-dialogue__actions" },
+        input,
+        h("button", { class: "mga-dialogue__choice is-primary", type: "submit", disabled: !live },
+          h("span", { class: "choice-label" }, "Submit")))));
 }
 
 export function renderSheet(layer, state) {

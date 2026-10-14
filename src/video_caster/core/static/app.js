@@ -15,7 +15,7 @@ let refreshQueued = false;
 function deviceLabel(server) {
   if (server === null) return "…";
   const selected = server.devices.find((d) => d.id === server.selected_device);
-  return selected === undefined ? "No device" : selected.name;
+  return selected === undefined ? "▲ No device" : `▲ ${selected.name}`;
 }
 
 function sheetChanged(s, p) {
@@ -33,7 +33,10 @@ function render(s) {
   chip.textContent = deviceLabel(s.server);
   chip.disabled = s.server === null || s.conn !== "live";
   for (const btn of document.querySelectorAll("[data-tab]")) {
-    btn.classList.toggle("active", btn.dataset.tab === s.tab);
+    const active = btn.dataset.tab === s.tab;
+    btn.classList.toggle("is-active", active);
+    if (active) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
   }
   $("library-tab").hidden = s.tab !== "library";
   $("remote-tab").hidden = s.tab !== "remote";

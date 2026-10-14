@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 # Patterns: S01E03, s01e03, 1x03, etc.
 _PATTERNS = [
     re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})"),          # S01E03
-    re.compile(r"(\d{1,2})[xX](\d{1,3})"),               # 1x03
+    re.compile(r"(?<!\d)(\d{1,2})[xX](\d{1,3})(?!\d)"),  # 1x03, not 1920x1080
     re.compile(r"[Ss]eason\s*(\d{1,2}).*[Ee]pisode\s*(\d{1,3})", re.IGNORECASE),
 ]
 
@@ -55,9 +55,24 @@ def parse_episode(path: Path) -> EpisodeInfo | None:
     return None
 
 
+def split_episode_name(path: Path) -> tuple[str, str] | None:
+    """The stem's text before and after its season/episode marker, matching parse_episode."""
+    name = path.stem
+    for pattern in _PATTERNS:
+        m = pattern.search(name)
+        if m:
+            return name[: m.start()], name[m.end():]
+    if _DIR_SEASON.search(path.parent.name):
+        m = _DIR_EPISODE.search(name)
+        if m:
+            return "", name[m.end():]
+    return None
+
+
 def _list_dir(directory: Path) -> list[Path]:
     try:
-        return list(directory.iterdir())
+        # Skips macOS AppleDouble "._*" files that SMB shares expose next to real videos.
+        return [p for p in directory.iterdir() if not p.name.startswith(".")]
     except OSError as e:
         log.warning("Skipping unreadable directory %s: %s", directory, e)
         return []

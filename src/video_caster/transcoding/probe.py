@@ -81,3 +81,32 @@ async def probe(path: Path) -> ProbeResult:
         result.container, result.duration,
     )
     return result
+
+
+def group_keyframes_into_segments(
+    keyframes: list[float],
+    total_duration: float,
+    target_segment_duration: float,
+) -> list[tuple[float, float]]:
+    """Group keyframes into HLS-style segments of ~target_segment_duration.
+
+    Returns a list of (start_time, duration) tuples. Mirrors what
+    `ffmpeg -c:v copy -f hls -hls_time N` emits: segment k begins at the first
+    keyframe at or after k * target, on a fixed grid from the stream start.
+    """
+    if not keyframes or total_duration <= 0:
+        return []
+
+    # Ensure we start at 0 even if first keyframe is slightly later (rare).
+    starts: list[float] = [keyframes[0] if keyframes[0] < 0.5 else 0.0]
+    for kf in keyframes[1:]:
+        if kf >= len(starts) * target_segment_duration:
+            starts.append(kf)
+
+    segments: list[tuple[float, float]] = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else total_duration
+        duration = end - start
+        if duration > 0:
+            segments.append((start, duration))
+    return segments

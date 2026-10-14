@@ -258,3 +258,17 @@ async def test_runner_cleanup_closes_event_sockets(engine):
         await ws.receive_json(timeout=2)
         await asyncio.wait_for(runner.cleanup(), timeout=5)
         await ws.close()
+
+
+async def test_browse_entries_have_titles_and_positions(client, history, watch_dir):
+    ep = make_video(watch_dir / "Show.S01E02.Second.mkv")
+    wid = await history.record_play(str(ep), ep.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 12.0)
+    make_video(watch_dir / "Sub" / "x.mkv")
+    entries = await (await client.get("/api/browse", params={"path": str(watch_dir)})).json()
+    by_name = {e["name"]: e for e in entries}
+    assert by_name["Sub"] == {"path": str(watch_dir / "Sub"), "name": "Sub", "is_dir": True}
+    assert by_name["Show.S01E02.Second.mkv"]["subtitle"] == "S01E02 · Second"
+    assert by_name["Show.S01E02.Second.mkv"]["position"] == 12.0
+    assert by_name["Movie.mkv"]["title"] == "Movie"
+    assert by_name["Movie.mkv"]["position"] is None

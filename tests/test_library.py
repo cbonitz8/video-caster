@@ -18,6 +18,8 @@ async def test_continue_watching_shape(history, video):
     assert await library.continue_watching(history) == [{
         "path": str(video),
         "name": "Movie.mkv",
+        "title": "Movie",
+        "subtitle": None,
         "position": 30.0,
         "duration": 100.0,
         "progress": 0.3,
@@ -29,9 +31,15 @@ async def test_up_next_suggests_next_episode(history, watch_dir):
     e2 = make_video(watch_dir / "Show" / "Season 1" / "Show.S01E02.mkv")
     wid = await history.record_play(str(e1), e1.name, "dev", "Living Room", 100.0)
     await history.mark_completed(wid)
-    assert await library.up_next(history) == [
-        {"path": str(e2), "name": e2.name, "watched_name": e1.name},
-    ]
+    assert await library.up_next(history) == [{
+        "path": str(e2),
+        "name": e2.name,
+        "title": "Show",
+        "subtitle": "S01E02",
+        "position": None,
+        "watched_name": e1.name,
+        "watched": {"title": "Show", "subtitle": "S01E01"},
+    }]
 
 
 async def test_up_next_skips_episode_already_in_history(history, watch_dir):
@@ -43,9 +51,9 @@ async def test_up_next_skips_episode_already_in_history(history, watch_dir):
     assert await library.up_next(history) == []
 
 
-async def test_newly_added_skips_missing_folder(watch_dir, tmp_path):
+async def test_newly_added_skips_missing_folder(history, watch_dir, tmp_path):
     config = Config(watch_folders=[tmp_path / "unplugged", watch_dir], recently_added_limit=20)
-    items = await library.newly_added(config)
+    items = await library.newly_added(config, history)
     assert [i["name"] for i in items] == ["Movie.mkv"]
     assert items[0]["path"] == str(watch_dir / "Movie.mkv")
     assert items[0]["size"] == 1
@@ -75,3 +83,15 @@ async def test_positions_for_more_paths_than_sqlite_parameters(history, watch_di
     await history.force_update_position(wid, 7.0)
     paths = [str(watch_dir / f"f{i}.mkv") for i in range(1200)] + [str(last)]
     assert await history.positions_for(paths) == {str(last): 7.0}
+
+
+async def test_newly_added_rows_have_titles_and_positions(history, watch_dir):
+    ep = make_video(watch_dir / "Show.S01E02.Second.mkv")
+    wid = await history.record_play(str(ep), ep.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 12.0)
+    config = Config(watch_folders=[watch_dir], recently_added_limit=20)
+    rows = {r["name"]: r for r in await library.newly_added(config, history)}
+    assert rows["Show.S01E02.Second.mkv"]["title"] == "Show"
+    assert rows["Show.S01E02.Second.mkv"]["subtitle"] == "S01E02 · Second"
+    assert rows["Show.S01E02.Second.mkv"]["position"] == 12.0
+    assert rows["Movie.mkv"]["position"] is None

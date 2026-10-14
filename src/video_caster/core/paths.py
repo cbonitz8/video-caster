@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from video_caster.titles import display_title
 from video_caster.transcoding.formats import VIDEO_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -34,5 +35,8 @@ def list_folder(target: Path) -> list[dict]:
                 # e.g. a symlink into a drive that isn't plugged in
                 log.warning("Skipping unreadable file %s: %s", child, e)
                 continue
-            entries.append({"path": str(child), "name": child.name, "is_dir": False, "size": size})
+            entries.append({
+                "path": str(child), "name": child.name, "is_dir": False, "size": size,
+                **display_title(child),
+            })
     return entries

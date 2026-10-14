@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from aiohttp import WSCloseCode, web
 from pychromecast.error import RequestTimeout
 
+from video_caster import library as lib
 from video_caster.core import auth, paths
 from video_caster.core.engine import Engine
 from video_caster.core.errors import BadRequest, EngineError, Forbidden, NotFound
@@ -130,6 +131,7 @@ class _Api:
             entries = await asyncio.to_thread(paths.list_folder, target)
         except PermissionError:
             raise Forbidden("Permission denied") from None
+        await lib.attach_positions(self.engine.history, [e for e in entries if not e["is_dir"]])
         return web.json_response(entries)
 
     async def get_settings(self, request: web.Request) -> web.Response:

@@ -136,7 +136,7 @@ class Engine:
         return {
             "continue_watching": await lib.continue_watching(self.history),
             "up_next": await lib.up_next(self.history),
-            "newly_added": await lib.newly_added(self.config),
+            "newly_added": await lib.newly_added(self.config, self.history),
         }
 
     async def is_in_history(self, path: Path) -> bool:

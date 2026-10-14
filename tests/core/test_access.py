@@ -34,7 +34,8 @@ def test_list_folder_dirs_first_videos_only(watch_dir):
     make_video(watch_dir / ".hidden.mkv")
     assert paths.list_folder(watch_dir) == [
         {"path": str(watch_dir / "B Season"), "name": "B Season", "is_dir": True},
-        {"path": str(watch_dir / "Movie.mkv"), "name": "Movie.mkv", "is_dir": False, "size": 1},
+        {"path": str(watch_dir / "Movie.mkv"), "name": "Movie.mkv", "is_dir": False, "size": 1,
+         "title": "Movie", "subtitle": None},
     ]
 
 

@@ -1,11 +1,13 @@
 import { connect } from "./api.js";
 import { dispatch, getState, subscribe, update } from "./store.js";
 import { createNowBar, renderLibrary } from "./library.js";
+import { createRemote } from "./remote.js";
 import { renderSheet } from "./sheets.js";
 import { refreshLibrary } from "./actions.js";
 
 const $ = (id) => document.getElementById(id);
 const nowBar = createNowBar($("nowbar"));
+const remote = createRemote($("remote-tab"));
 let prev = null;
 let toastTimer = null;
 let refreshQueued = false;
@@ -39,6 +41,7 @@ function render(s) {
     $("library-tab").replaceChildren(renderLibrary(s));
   }
   nowBar.patch(s);
+  remote.patch(s);
   if (sheetChanged(s, prev)) renderSheet($("sheet-layer"), s);
   if (prev === null || s.toast !== prev.toast) {
     $("toast").hidden = s.toast === null;

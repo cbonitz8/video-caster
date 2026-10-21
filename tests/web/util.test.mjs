@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backoffDelay, episodeParts, formatLeft, formatTime, throttle, tileSub, seasonLine, episodeTitle, findShow, canResume } from "../../src/video_caster/core/static/util.js";
+import { backoffDelay, episodeParts, formatLeft, formatTime, throttle, tileSub, seasonLine, episodeTitle, findShow, canResume, wideSub } from "../../src/video_caster/core/static/util.js";
 
 test("backoff doubles from 1s and caps at 10s", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(backoffDelay), [1000, 2000, 4000, 8000, 10000, 10000]);
@@ -96,4 +96,11 @@ test("canResume: a saved position resumes even without a duration", () => {
   assert.equal(canResume({ position: 50, duration: 0 }), true);
   assert.equal(canResume({ position: 1040, duration: 2862 }), true);
   assert.equal(canResume({ position: null, duration: null }), false);
+});
+
+test("wideSub: time left only, since the episode name is on the image", () => {
+  assert.equal(wideSub({ subtitle: "S04E06 · Don't Jump", position: 1040, duration: 2862 }), "30m left");
+  assert.equal(wideSub({ subtitle: "S04E08 · Follow the Anger", position: null, duration: null }), null);
+  assert.equal(wideSub({ subtitle: null, position: 60, duration: 7920 }), "2h 11m left");
+  assert.equal(wideSub({ subtitle: null, position: 50, duration: 0 }), null);
 });

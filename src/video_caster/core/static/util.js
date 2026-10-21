@@ -83,3 +83,7 @@ export function findShow(library, key) {
   const show = library.shows.find((s) => s.key === key);
   return show === undefined ? null : show;
 }
+
+export function wideSub(row) {
+  return inProgress(row) ? formatLeft(row.position, row.duration) : null;
+}

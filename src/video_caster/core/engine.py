@@ -151,11 +151,7 @@ class Engine:
         }
 
     async def library(self) -> dict:
-        return {
-            "continue_watching": await lib.continue_watching(self.history),
-            "up_next": await lib.up_next(self.history),
-            "newly_added": await lib.newly_added(self.config, self.history),
-        }
+        return await lib.build_library(self.config, self.history, self.posters_dir)
 
     async def is_in_history(self, path: Path) -> bool:
         return await self.history.has_file(str(path))

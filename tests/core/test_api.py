@@ -36,7 +36,7 @@ async def test_state(client):
 
 async def test_library(client):
     resp = await client.get("/api/library")
-    assert set(await resp.json()) == {"continue_watching", "up_next", "newly_added"}
+    assert set(await resp.json()) == {"continue", "shows", "movies", "newly_added"}
 
 
 async def test_browse_roots_and_folder(client, watch_dir):

@@ -116,8 +116,8 @@ def test_select_unknown_device_raises(engine):
         engine.select_device("chromecast:10.0.0.1:8009")
 
 
-async def test_library_has_three_sections(engine):
-    assert set(await engine.library()) == {"continue_watching", "up_next", "newly_added"}
+async def test_library_has_shelf_sections(engine):
+    assert set(await engine.library()) == {"continue", "shows", "movies", "newly_added"}
 
 
 def last_current(events: list[dict]) -> dict:

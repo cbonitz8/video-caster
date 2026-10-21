@@ -18,6 +18,7 @@ from video_caster.config import CONFIG_DIR, Config, ensure_default_config
 from video_caster.core.api import create_app
 from video_caster.core.auth import new_token, save_token
 from video_caster.core.engine import Engine
+from video_caster.posters import POSTERS_DIR
 from video_caster.storage.history import HistoryStore
 
 HOST = "127.0.0.1"
@@ -33,6 +34,7 @@ def missing_tools() -> list[str]:
 
 
 async def serve(port: int, *, config: Config, token_path: Path) -> int:
+    POSTERS_DIR.mkdir(parents=True, exist_ok=True)
     engine = Engine(config, CastOrchestrator(), HistoryStore(config.history_db_path))
     token = new_token()
     runner = web.AppRunner(create_app(engine, token, extra_hosts=(TAILNET_HOST,)))

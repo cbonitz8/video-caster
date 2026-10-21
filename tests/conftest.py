@@ -121,6 +121,8 @@ def make_engine(orchestrator, history, watch_dir, saved_configs, tmp_path):
 
         folders = [watch_dir] if watch_folders is None else watch_folders
         config = Config(watch_folders=folders, history_db_path=tmp_path / "history.db")
+        posters_dir = tmp_path / "posters"
+        posters_dir.mkdir(exist_ok=True)
         return Engine(
             config, orchestrator, history,
             scan=fake_scan,
@@ -129,6 +131,7 @@ def make_engine(orchestrator, history, watch_dir, saved_configs, tmp_path):
             resume_delay=0.0,
             pin_timeout=0.2,
             tick_interval=0.01,
+            posters_dir=posters_dir,
         )
     return _make
 

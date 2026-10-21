@@ -16,6 +16,7 @@ from video_caster.core.errors import BadRequest, Conflict, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
+from video_caster.posters import POSTERS_DIR
 from video_caster.storage.episode import find_next_episode
 from video_caster.storage.history import HistoryStore
 from video_caster.titles import display_title
@@ -86,8 +87,10 @@ class Engine:
         resume_delay: float = 1.0,
         pin_timeout: float = 120.0,
         tick_interval: float = 1.0,
+        posters_dir: Path = POSTERS_DIR,
     ) -> None:
         self.config = config
+        self.posters_dir = posters_dir
         self.history = history
         self.events = EventBus()
         self._orch = orchestrator

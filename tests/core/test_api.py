@@ -336,3 +336,18 @@ async def test_manifest_served_as_manifest_json(client):
     assert resp.status == 200
     assert resp.headers["Content-Type"].startswith("application/manifest+json")
     assert (await client.get("/static/apple-touch-icon.png")).status == 200
+
+
+async def test_poster_served(client, engine):
+    (engine.posters_dir / "show.jpg").write_bytes(b"jpegbytes")
+    resp = await client.get("/posters/show.jpg?v=1")
+    assert resp.status == 200
+    assert await resp.read() == b"jpegbytes"
+    assert "immutable" in resp.headers["Cache-Control"]
+
+
+@pytest.mark.parametrize("name", ["missing.jpg", "notes.txt", ".hidden.jpg", "..%2Fhistory.db"])
+async def test_poster_rejects(client, engine, name):
+    (engine.posters_dir / "notes.txt").write_bytes(b"x")
+    (engine.posters_dir / ".hidden.jpg").write_bytes(b"x")
+    assert (await client.get(f"/posters/{name}")).status == 404

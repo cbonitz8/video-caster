@@ -13,6 +13,7 @@ from aiohttp import WSCloseCode, web
 from pychromecast.error import RequestTimeout
 
 from video_caster import library as lib
+from video_caster import posters
 from video_caster.core import auth, paths
 from video_caster.core.engine import Engine
 from video_caster.core.errors import BadRequest, EngineError, Forbidden, NotFound
@@ -114,6 +115,16 @@ class _Api:
 
     async def library(self, request: web.Request) -> web.Response:
         return web.json_response(await self.engine.library())
+
+    async def poster(self, request: web.Request) -> web.StreamResponse:
+        name = request.match_info["name"]
+        if not posters.is_art_name(name):
+            raise NotFound("No such poster")
+        target = self.engine.posters_dir / name
+        if not target.is_file():
+            raise NotFound("No such poster")
+        # URLs carry ?v=<mtime>, so a replaced image gets a new URL.
+        return web.FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     async def browse(self, request: web.Request) -> web.Response:
         folders = self.engine.config.watch_folders
@@ -252,6 +263,7 @@ def create_app(engine: Engine, token: str, *, extra_hosts: Iterable[str] = ()) -
     r.add_get("/api/state", api.state)
     r.add_get("/api/library", api.library)
     r.add_get("/api/browse", api.browse)
+    r.add_get("/posters/{name}", api.poster)
     r.add_get("/api/settings", api.get_settings)
     r.add_put("/api/settings", api.put_settings)
     r.add_post("/api/cast", api.cast)

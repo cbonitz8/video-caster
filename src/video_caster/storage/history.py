@@ -210,6 +210,32 @@ class HistoryStore:
         """Saved positions of the in-progress files among file_paths; others are absent."""
         return await self._run(self._positions_for, file_paths)
 
+    def _latest_meaningful(self, file_paths: list[str]) -> dict[str, WatchRecord]:
+        conn = self._get_conn()
+        latest: dict[str, WatchRecord] = {}
+        for start in range(0, len(file_paths), 500):
+            chunk = file_paths[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                "SELECT * FROM watch_history "
+                f"WHERE (completed = 1 OR position > 0) AND file_path IN ({marks}) "
+                "ORDER BY last_updated_at, id",
+                chunk,
+            ).fetchall()
+            for r in rows:
+                latest[r["file_path"]] = WatchRecord(
+                    id=r["id"], file_path=r["file_path"], file_name=r["file_name"],
+                    device_id=r["device_id"], device_name=r["device_name"],
+                    started_at=r["started_at"], last_updated_at=r["last_updated_at"],
+                    duration=r["duration"], position=r["position"],
+                    completed=bool(r["completed"]),
+                )
+        return latest
+
+    async def latest_meaningful(self, file_paths: list[str]) -> dict[str, WatchRecord]:
+        """Newest completed-or-started row per file; rows a cast left at position 0 don't count."""
+        return await self._run(self._latest_meaningful, file_paths)
+
     def _has_file(self, file_path: str) -> bool:
         conn = self._get_conn()
         row = conn.execute(

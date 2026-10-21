@@ -6,6 +6,12 @@ from video_caster.config import Config
 from tests.conftest import make_video
 
 
+def at(history, wid, when):
+    conn = history._get_conn()
+    conn.execute("UPDATE watch_history SET last_updated_at = ? WHERE id = ?", (when, wid))
+    conn.commit()
+
+
 async def test_has_file(history, video):
     assert await history.has_file(str(video)) is False
     await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
@@ -95,3 +101,39 @@ async def test_newly_added_rows_have_titles_and_positions(history, watch_dir):
     assert rows["Show.S01E02.Second.mkv"]["subtitle"] == "S01E02 · Second"
     assert rows["Show.S01E02.Second.mkv"]["position"] == 12.0
     assert rows["Movie.mkv"]["position"] is None
+
+
+async def test_latest_meaningful_prefers_rewatch_over_completed(history, video):
+    wid = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 98.0)
+    await history.mark_completed(wid)
+    rewatch = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(rewatch, 40.0)
+    at(history, wid, 1.0)
+    at(history, rewatch, 2.0)
+    rec = (await history.latest_meaningful([str(video)]))[str(video)]
+    assert (rec.id, rec.position, rec.completed) == (rewatch, 40.0, False)
+
+
+async def test_latest_meaningful_ignores_position_zero_rows(history, video):
+    wid = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
+    await history.mark_completed(wid)
+    newer = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
+    at(history, wid, 1.0)
+    at(history, newer, 2.0)
+    rec = (await history.latest_meaningful([str(video)]))[str(video)]
+    assert rec.id == wid and rec.completed is True
+
+
+async def test_latest_meaningful_omits_untouched_and_unlisted(history, watch_dir):
+    a = make_video(watch_dir / "a.mkv")
+    await history.record_play(str(a), a.name, "dev", "Living Room", 100.0)
+    assert await history.latest_meaningful([str(a), str(watch_dir / "never.mkv")]) == {}
+
+
+async def test_latest_meaningful_more_paths_than_sqlite_parameters(history, watch_dir):
+    last = make_video(watch_dir / "last.mkv")
+    wid = await history.record_play(str(last), last.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 7.0)
+    paths = [str(watch_dir / f"f{i}.mkv") for i in range(1200)] + [str(last)]
+    assert list(await history.latest_meaningful(paths)) == [str(last)]

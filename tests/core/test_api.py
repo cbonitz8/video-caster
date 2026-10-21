@@ -351,3 +351,15 @@ async def test_poster_rejects(client, engine, name):
     (engine.posters_dir / "notes.txt").write_bytes(b"x")
     (engine.posters_dir / ".hidden.jpg").write_bytes(b"x")
     assert (await client.get(f"/posters/{name}")).status == 404
+
+
+async def test_poster_refuses_symlink_out_of_folder(client, engine, tmp_path):
+    secret = tmp_path / "secret.jpg"
+    secret.write_bytes(b"private")
+    (engine.posters_dir / "link.jpg").symlink_to(secret)
+    assert (await client.get("/posters/link.jpg")).status == 404
+
+
+async def test_poster_traversal_with_image_extension(client, engine, tmp_path):
+    (tmp_path / "x.jpg").write_bytes(b"outside")
+    assert (await client.get("/posters/..%2Fx.jpg")).status == 404

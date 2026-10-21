@@ -47,6 +47,10 @@ export function episodeParts(subtitle) {
   return { code: match[1], episode: match[2], name: match[3] === undefined ? null : match[3] };
 }
 
+export function canResume(row) {
+  return row.position !== null;
+}
+
 export function inProgress(row) {
   return row.position !== null && row.duration !== null && row.duration > 0;
 }

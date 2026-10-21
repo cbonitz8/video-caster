@@ -121,7 +121,7 @@ class _Api:
         if not posters.is_art_name(name):
             raise NotFound("No such poster")
         target = self.engine.posters_dir / name
-        if not target.is_file():
+        if target.is_symlink() or not target.is_file():
             raise NotFound("No such poster")
         # URLs carry ?v=<mtime>, so a replaced image gets a new URL.
         return web.FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})

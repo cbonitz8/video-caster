@@ -41,3 +41,18 @@ test("openShow and closeShow set state.show", () => {
   closeShow();
   assert.equal(getState().show, null);
 });
+
+test("refreshing closes a show page whose show is gone", async (t) => {
+  serve(t, []);
+  update({ browse: null, show: "unplugged show" });
+  await refreshLibrary();
+  assert.equal(getState().show, null);
+});
+
+test("refreshing keeps a show page whose show is still there", async (t) => {
+  const library = { ...emptyLibrary, shows: [{ key: "ted lasso" }] };
+  t.mock.method(globalThis, "fetch", async () => ({ ok: true, status: 200, json: async () => library }));
+  update({ browse: null, show: "ted lasso" });
+  await refreshLibrary();
+  assert.equal(getState().show, "ted lasso");
+});

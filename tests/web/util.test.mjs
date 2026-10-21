@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backoffDelay, episodeParts, formatLeft, formatTime, throttle, tileSub, seasonLine, episodeTitle, findShow } from "../../src/video_caster/core/static/util.js";
+import { backoffDelay, episodeParts, formatLeft, formatTime, throttle, tileSub, seasonLine, episodeTitle, findShow, canResume } from "../../src/video_caster/core/static/util.js";
 
 test("backoff doubles from 1s and caps at 10s", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(backoffDelay), [1000, 2000, 4000, 8000, 10000, 10000]);
@@ -90,4 +90,10 @@ test("findShow returns the show or null for a vanished key", () => {
   const library = { shows: [{ key: "a" }] };
   assert.deepEqual(findShow(library, "a"), { key: "a" });
   assert.equal(findShow(library, "b"), null);
+});
+
+test("canResume: a saved position resumes even without a duration", () => {
+  assert.equal(canResume({ position: 50, duration: 0 }), true);
+  assert.equal(canResume({ position: 1040, duration: 2862 }), true);
+  assert.equal(canResume({ position: null, duration: null }), false);
 });

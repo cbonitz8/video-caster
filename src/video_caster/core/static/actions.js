@@ -1,5 +1,6 @@
 import { get, post } from "./api.js";
 import { getState, update } from "./store.js";
+import { findShow } from "./util.js";
 
 export function showError(result) {
   if (result.network) return; // the dropped socket drives the reconnect strip instead
@@ -16,8 +17,14 @@ export async function call(path, body) {
 export async function refreshLibrary() {
   update({ libraryStale: false });
   const result = await get("/api/library");
-  if (result.ok) update({ library: result.data });
-  else showError(result);
+  if (result.ok) {
+    const { show } = getState();
+    update(show !== null && findShow(result.data, show) === null
+      ? { library: result.data, show: null }
+      : { library: result.data });
+  } else {
+    showError(result);
+  }
   const { browse } = getState();
   if (browse !== null && browse.entries !== null) await reloadBrowse(browse);
 }

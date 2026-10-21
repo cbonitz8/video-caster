@@ -1,10 +1,12 @@
 import { h } from "./dom.js";
-import { episodeParts, episodeTitle, formatLeft, formatTime, inProgress, seasonLabel, seasonLine } from "./util.js";
+import {
+  canResume, episodeParts, episodeTitle, formatLeft, formatTime, inProgress, seasonLabel, seasonLine,
+} from "./util.js";
 import { castFile, closeShow, tapFile } from "./actions.js";
 import { art, blocks, count } from "./shelves.js";
 
 function upNext(row, live) {
-  const resume = inProgress(row);
+  const resume = canResume(row);
   return h("div", { class: "mga-dialogue show-next" },
     h("span", { class: "mga-dialogue__tab" }, "UP NEXT"),
     h("div", { class: "mga-dialogue__box" },

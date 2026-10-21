@@ -92,3 +92,11 @@ export function browseBack() {
   if (stack.length === 0) update({ browse: null });
   else loadBrowse(stack);
 }
+
+export function openShow(key) {
+  update({ show: key });
+}
+
+export function closeShow() {
+  update({ show: null });
+}

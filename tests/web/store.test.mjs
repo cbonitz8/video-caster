@@ -104,3 +104,7 @@ test("nowPlaying prefers the local starting, then the server's casting, then cur
 test("a server event before the snapshot is an error", () => {
   assert.throws(() => reduce(initialState(), { type: "status", data: {} }), /before the state snapshot/);
 });
+
+test("no show page is open initially", () => {
+  assert.equal(initialState().show, null);
+});

@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { refreshLibrary } from "../../src/video_caster/core/static/actions.js";
+import { closeShow, openShow, refreshLibrary } from "../../src/video_caster/core/static/actions.js";
 import { getState, update } from "../../src/video_caster/core/static/store.js";
 
-const emptyLibrary = { continue_watching: [], up_next: [], newly_added: [] };
+const emptyLibrary = { continue: [], shows: [], movies: [], newly_added: [] };
 const episode = {
   path: "/w/Show/e3.mkv", name: "e3.mkv", is_dir: false, size: 1, title: "Show", subtitle: "S01E03", position: 1200,
 };
@@ -33,4 +33,11 @@ test("refreshing the library home fetches only the library", async (t) => {
   await refreshLibrary();
   assert.deepEqual(urls, ["/api/library"]);
   assert.deepEqual(getState().library, emptyLibrary);
+});
+
+test("openShow and closeShow set state.show", () => {
+  openShow("ted lasso");
+  assert.equal(getState().show, "ted lasso");
+  closeShow();
+  assert.equal(getState().show, null);
 });

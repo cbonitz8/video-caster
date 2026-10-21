@@ -5,6 +5,7 @@ export function initialState() {
     library: null,
     libraryStale: false,
     browse: null,
+    show: null,
     tab: "library",
     sheet: null,
     starting: null,

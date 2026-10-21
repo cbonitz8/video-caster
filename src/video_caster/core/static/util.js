@@ -46,3 +46,15 @@ export function episodeParts(subtitle) {
   if (match === null) return null;
   return { code: match[1], episode: match[2], name: match[3] === undefined ? null : match[3] };
 }
+
+export function inProgress(row) {
+  return row.position !== null && row.duration !== null && row.duration > 0;
+}
+
+export function tileSub(row) {
+  const parts = episodeParts(row.subtitle);
+  const left = inProgress(row) ? formatLeft(row.position, row.duration) : null;
+  if (parts === null) return left;
+  if (left !== null) return `${parts.code} · ${left}`;
+  return row.subtitle;
+}

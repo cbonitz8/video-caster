@@ -1,7 +1,8 @@
 import { h } from "./dom.js";
-import { episodeParts, formatLeft } from "./util.js";
+import { episodeParts } from "./util.js";
 import { browseBack, call, openBrowse, tapFile } from "./actions.js";
 import { nowPlaying, update } from "./store.js";
+import { count, renderShelves } from "./shelves.js";
 
 function subtitleLine(subtitle) {
   const parts = episodeParts(subtitle);
@@ -9,12 +10,6 @@ function subtitleLine(subtitle) {
   return h("span", { class: "mga-row__sub" },
     h("span", { class: "mga-row__code" }, parts.code),
     parts.name === null ? null : ` · ${parts.name}`);
-}
-
-function blocks(progress) {
-  const on = progress > 0 ? Math.max(1, Math.round(progress * 10)) : 0;
-  return h("span", { class: "mga-blocks", "aria-hidden": "true" },
-    Array.from({ length: 10 }, (_, i) => h("i", { class: i < on ? "on" : "" })));
 }
 
 function fileRow(row, extra, meta, live) {
@@ -32,32 +27,9 @@ function folderRow(label, folder, live) {
     h("span", { class: "mga-row__meta" }, "▸"));
 }
 
-function count(n) {
-  return h("span", { class: "mga-sectionbar__aside" }, String(n).padStart(2, "0"));
-}
-
-function section(title, rows) {
-  if (rows.length === 0) return null;
-  return h("section", { class: "lib-section" },
-    h("h2", { class: "mga-sectionbar" }, title, count(rows.length)),
-    h("div", { class: "mga-list" }, rows));
-}
-
-function continueRow(row, live) {
-  if (row.duration <= 0) return fileRow(row, null, "", live);
-  return fileRow(row, blocks(row.progress), formatLeft(row.position, row.duration), live);
-}
-
-function upNextRow(row, live) {
-  const watched = row.watched.subtitle === null ? row.watched.title : row.watched.subtitle;
-  return fileRow(row, h("span", { class: "mga-row__sub" }, `After ${watched}`), "", live);
-}
-
 function home(library, live) {
   return h("div", { class: "lib" },
-    section("Continue Watching", library.continue_watching.map((r) => continueRow(r, live))),
-    section("Up Next", library.up_next.map((r) => upNextRow(r, live))),
-    section("Newly Added", library.newly_added.map((r) => fileRow(r, null, r.mtime_ago, live))),
+    renderShelves(library, live),
     h("section", { class: "lib-section" },
       h("h2", { class: "mga-sectionbar" }, "Everything"),
       h("div", { class: "mga-list" }, folderRow("Browse folders", { path: null, name: "Folders" }, live))),

@@ -40,7 +40,8 @@ function render(s) {
   }
   $("library-tab").hidden = s.tab !== "library";
   $("remote-tab").hidden = s.tab !== "remote";
-  if (prev === null || s.library !== prev.library || s.browse !== prev.browse || s.conn !== prev.conn) {
+  if (prev === null || s.library !== prev.library || s.browse !== prev.browse || s.show !== prev.show
+    || s.conn !== prev.conn) {
     $("library-tab").replaceChildren(renderLibrary(s));
   }
   nowBar.patch(s);

@@ -58,3 +58,24 @@ export function tileSub(row) {
   if (left !== null) return `${parts.code} · ${left}`;
   return row.subtitle;
 }
+
+export function seasonLabel(n) {
+  return n === 0 ? "Specials" : `Season ${n}`;
+}
+
+export function seasonLine(show) {
+  const eps = show.episode_count === 1 ? "1 ep" : `${show.episode_count} eps`;
+  const seasons = show.seasons.length === 1 ? seasonLabel(show.seasons[0].season) : `${show.seasons.length} seasons`;
+  return `${seasons} · ${eps}`;
+}
+
+export function episodeTitle(row) {
+  const parts = episodeParts(row.subtitle);
+  if (parts === null) return row.title;
+  return parts.name === null ? `Episode ${Number(parts.episode)}` : parts.name;
+}
+
+export function findShow(library, key) {
+  const show = library.shows.find((s) => s.key === key);
+  return show === undefined ? null : show;
+}

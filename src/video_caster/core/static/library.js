@@ -1,8 +1,9 @@
 import { h } from "./dom.js";
-import { episodeParts } from "./util.js";
+import { episodeParts, findShow } from "./util.js";
 import { browseBack, call, openBrowse, tapFile } from "./actions.js";
 import { nowPlaying, update } from "./store.js";
 import { count, renderShelves } from "./shelves.js";
+import { renderShow } from "./showpage.js";
 
 function subtitleLine(subtitle) {
   const parts = episodeParts(subtitle);
@@ -58,6 +59,8 @@ export function renderLibrary(state) {
   const live = state.conn === "live";
   if (state.browse !== null) return browse(state, live);
   if (state.library === null) return empty("Loading…");
+  const show = state.show === null ? null : findShow(state.library, state.show);
+  if (show !== null) return renderShow(show, live);
   return home(state.library, live);
 }
 

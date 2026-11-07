@@ -37,6 +37,7 @@ def needs_transcode(
     audio_codec: str,
     container: str,
     target: str,
+    audio_channels: int = 0,
 ) -> tuple[bool, bool, bool]:
     """Check if transcoding is needed for the given target device type.
 
@@ -63,8 +64,14 @@ def needs_transcode(
     audio_ok = audio_codec in supported_audio
     container_ok = container in supported_containers
 
+    # Default Chromecast/DLNA receivers flake on multichannel (>2ch) AAC —
+    # downmix to stereo to avoid LOAD_FAILED.
+    multichannel_unsafe = (
+        target in ("chromecast", "dlna") and audio_channels > 2
+    )
+
     needs_video = not video_ok
-    needs_audio = not audio_ok
-    needs_remux = not container_ok and video_ok and audio_ok
+    needs_audio = not audio_ok or multichannel_unsafe
+    needs_remux = not container_ok and video_ok and not needs_audio
 
     return needs_video, needs_audio, needs_remux

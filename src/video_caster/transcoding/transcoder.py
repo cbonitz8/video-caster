@@ -45,15 +45,19 @@ class Transcoder:
 
         cmd += ["-i", str(input_path)]
 
+        # Shift output timestamps so receiver shows correct position after seek.
+        if seek_to > 0:
+            cmd += ["-output_ts_offset", str(seek_to)]
+
         # Video codec
         if transcode_video:
             cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "22"]
         else:
             cmd += ["-c:v", "copy"]
 
-        # Audio codec
+        # Audio codec — downmix to stereo when transcoding for receiver compat
         if transcode_audio:
-            cmd += ["-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
         else:
             cmd += ["-c:a", "copy"]
 

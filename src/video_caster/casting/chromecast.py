@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pychromecast
+from pychromecast.config import APP_MEDIA_RECEIVER
 from pychromecast.controllers.media import MediaStatusListener
 
 from video_caster.casting.base import CastHandler, PlaybackStatus
@@ -61,13 +62,21 @@ class ChromecastHandler(CastHandler):
         if title:
             metadata["title"] = title
 
+        media_info: dict = {}
+        if duration > 0:
+            media_info["duration"] = duration
+
         def _play():
+            # MediaController sends LOAD to any foreground app that speaks the
+            # media namespace (e.g. Spotify), which ignores it.
+            self._cast.start_app(APP_MEDIA_RECEIVER)
             mc.play_media(
                 url,
                 content_type,
                 title=title or None,
                 stream_type="BUFFERED",
                 metadata=metadata if metadata else None,
+                media_info=media_info or None,
             )
             mc.block_until_active(timeout=10)
 

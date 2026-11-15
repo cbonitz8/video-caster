@@ -157,27 +157,6 @@ class HistoryStore:
     async def mark_completed(self, watch_id: int) -> None:
         await self._run(self._mark_completed, watch_id)
 
-    def _get_continue_watching(self, limit: int = 20) -> list[WatchRecord]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM watch_history WHERE completed = 0 AND position > 0 "
-            "ORDER BY last_updated_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [
-            WatchRecord(
-                id=r["id"], file_path=r["file_path"], file_name=r["file_name"],
-                device_id=r["device_id"], device_name=r["device_name"],
-                started_at=r["started_at"], last_updated_at=r["last_updated_at"],
-                duration=r["duration"], position=r["position"],
-                completed=bool(r["completed"]),
-            )
-            for r in rows
-        ]
-
-    async def get_continue_watching(self, limit: int = 20) -> list[WatchRecord]:
-        return await self._run(self._get_continue_watching, limit)
-
     def _get_saved_position(self, file_path: str) -> float:
         conn = self._get_conn()
         row = conn.execute(
@@ -247,26 +226,3 @@ class HistoryStore:
     async def has_file(self, file_path: str) -> bool:
         """True if the file was ever cast, completed or not."""
         return await self._run(self._has_file, file_path)
-
-    def _get_completed_or_nearly(self, limit: int = 50) -> list[WatchRecord]:
-        """Get episodes that are completed or >= 90% watched."""
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM watch_history "
-            "WHERE (completed = 1 OR (duration > 0 AND position / duration >= 0.9)) "
-            "ORDER BY last_updated_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [
-            WatchRecord(
-                id=r["id"], file_path=r["file_path"], file_name=r["file_name"],
-                device_id=r["device_id"], device_name=r["device_name"],
-                started_at=r["started_at"], last_updated_at=r["last_updated_at"],
-                duration=r["duration"], position=r["position"],
-                completed=bool(r["completed"]),
-            )
-            for r in rows
-        ]
-
-    async def get_completed_or_nearly(self, limit: int = 50) -> list[WatchRecord]:
-        return await self._run(self._get_completed_or_nearly, limit)

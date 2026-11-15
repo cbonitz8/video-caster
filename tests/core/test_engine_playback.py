@@ -48,8 +48,8 @@ async def test_tick_marks_completed_at_ninety_percent(engine, orchestrator, hist
     orchestrator.status = PlaybackStatus(state="playing", current_time=95.0, duration=100.0)
     await engine.tick()
     assert await history.get_saved_position(str(video)) == 0.0  # completed rows don't resume
-    completed = await history.get_completed_or_nearly()
-    assert completed[0].file_path == str(video)
+    latest = await history.latest_meaningful([str(video)])
+    assert latest[str(video)].completed is True
     assert {"type": "library_changed", "data": None} in drain(queue)
 
 

@@ -30,7 +30,6 @@ class Config:
     recently_added_limit: int = DEFAULT_RECENTLY_ADDED_LIMIT
     recently_added_days: int = DEFAULT_RECENTLY_ADDED_DAYS
     history_db_path: Path = field(default_factory=lambda: CONFIG_DIR / "history.db")
-    web_remote_port: int = 8484
 
 
 def load_config() -> Config:
@@ -50,7 +49,6 @@ def load_config() -> Config:
         recently_added_limit=data.get("recently_added_limit", DEFAULT_RECENTLY_ADDED_LIMIT),
         recently_added_days=data.get("recently_added_days", DEFAULT_RECENTLY_ADDED_DAYS),
         history_db_path=Path(data.get("history_db_path", str(CONFIG_DIR / "history.db"))),
-        web_remote_port=data.get("web_remote_port", 8484),
     )
 
 
@@ -62,7 +60,6 @@ def save_config(config: Config) -> None:
         f'recently_added_limit = {config.recently_added_limit}\n',
         f'recently_added_days = {config.recently_added_days}\n',
         f'history_db_path = "{config.history_db_path}"\n',
-        f'web_remote_port = {config.web_remote_port}\n',
         f'\n',
     ]
     # Write watch folders as a TOML array

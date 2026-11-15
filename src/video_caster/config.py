@@ -21,14 +21,12 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 DEFAULT_WATCH_FOLDERS = [Path.home() / "Movies"]
 DEFAULT_RECENTLY_ADDED_LIMIT = 20
-DEFAULT_RECENTLY_ADDED_DAYS = 30
 
 
 @dataclass
 class Config:
     watch_folders: list[Path] = field(default_factory=lambda: list(DEFAULT_WATCH_FOLDERS))
     recently_added_limit: int = DEFAULT_RECENTLY_ADDED_LIMIT
-    recently_added_days: int = DEFAULT_RECENTLY_ADDED_DAYS
     history_db_path: Path = field(default_factory=lambda: CONFIG_DIR / "history.db")
 
 
@@ -47,7 +45,6 @@ def load_config() -> Config:
     return Config(
         watch_folders=watch_folders,
         recently_added_limit=data.get("recently_added_limit", DEFAULT_RECENTLY_ADDED_LIMIT),
-        recently_added_days=data.get("recently_added_days", DEFAULT_RECENTLY_ADDED_DAYS),
         history_db_path=Path(data.get("history_db_path", str(CONFIG_DIR / "history.db"))),
     )
 
@@ -58,7 +55,6 @@ def save_config(config: Config) -> None:
     lines = [
         f'# Video Caster configuration\n',
         f'recently_added_limit = {config.recently_added_limit}\n',
-        f'recently_added_days = {config.recently_added_days}\n',
         f'history_db_path = "{config.history_db_path}"\n',
         f'\n',
     ]

@@ -86,7 +86,7 @@ def test_update_settings_persists(engine, saved_configs, tmp_path):
     {"watch_folders": [""]},
     {"recently_added_limit": 0},
     {"recently_added_limit": True},
-    {"recently_added_days": "7"},
+    {"recently_added_days": 7},
     {"watch_folders": ['/Volumes/stanley/Bob\'s "Best"']},
     {"watch_folders": ["/tmp/a\\b"]},
     {"watch_folders": ["/tmp/a\nb"]},

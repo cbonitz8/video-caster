@@ -384,11 +384,10 @@ class Engine:
                 {"path": str(f), "available": f.is_dir()} for f in self.config.watch_folders
             ],
             "recently_added_limit": self.config.recently_added_limit,
-            "recently_added_days": self.config.recently_added_days,
         }
 
     def update_settings(self, changes: dict) -> dict:
-        allowed = {"watch_folders", "recently_added_limit", "recently_added_days"}
+        allowed = {"watch_folders", "recently_added_limit"}
         unknown = set(changes) - allowed
         if unknown:
             raise BadRequest(f"Unknown settings: {', '.join(sorted(unknown))}")
@@ -404,12 +403,11 @@ class Engine:
             if not all(p.is_absolute() for p in paths):
                 raise BadRequest("watch_folders must be a list of absolute paths")
             updates["watch_folders"] = paths
-        for key in ("recently_added_limit", "recently_added_days"):
-            if key in changes:
-                value = changes[key]
-                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                    raise BadRequest(f"{key} must be a positive integer")
-                updates[key] = value
+        if "recently_added_limit" in changes:
+            limit = changes["recently_added_limit"]
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                raise BadRequest("recently_added_limit must be a positive integer")
+            updates["recently_added_limit"] = limit
         candidate = dataclasses.replace(self.config, **updates)
         self._persist_config(candidate)
         self.config = candidate

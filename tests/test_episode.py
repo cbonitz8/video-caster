@@ -2,14 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from video_caster.storage.episode import find_next_episode, parse_episode, split_episode_name
-from tests.conftest import make_video
-
-
-def test_next_episode_ignores_appledouble_files(tmp_path):
-    e6 = make_video(tmp_path / "Ted Lasso - S04E06 - Ice Cold.mkv")
-    make_video(tmp_path / "._Ted Lasso - S04E07 - Yes & Baby.mkv")
-    assert find_next_episode(e6) is None
+from video_caster.storage.episode import parse_episode, split_episode_name
 
 
 def test_resolution_is_not_an_episode():

@@ -11,11 +11,9 @@ from urllib.parse import urlsplit
 
 from aiohttp import WSCloseCode, web
 
-from video_caster import library as lib
-from video_caster import posters
-from video_caster.core import auth, paths
+from video_caster.core import auth
 from video_caster.core.engine import Engine
-from video_caster.core.errors import BadRequest, EngineError, Forbidden, NotFound
+from video_caster.core.errors import BadRequest, EngineError
 
 log = logging.getLogger(__name__)
 
@@ -116,33 +114,17 @@ class _Api:
         return web.json_response(await self.engine.library())
 
     async def poster(self, request: web.Request) -> web.StreamResponse:
-        name = request.match_info["name"]
-        if not posters.is_art_name(name):
-            raise NotFound("No such poster")
-        target = self.engine.posters_dir / name
-        if target.is_symlink() or not target.is_file():
-            raise NotFound("No such poster")
+        target = self.engine.poster_file(request.match_info["name"])
         # URLs carry ?v=<mtime>, so a replaced image gets a new URL.
         return web.FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     async def browse(self, request: web.Request) -> web.Response:
-        folders = self.engine.config.watch_folders
         raw = request.query.get("path")
         if raw is None or raw == "":
-            return web.json_response(paths.watch_roots(folders))
+            return web.json_response(await self.engine.browse(None))
         if "\0" in raw:
             raise BadRequest("path must not contain NUL characters")
-        target = Path(raw)
-        if not paths.is_under(target, folders):
-            raise Forbidden("Path is not in a watch folder")
-        if not target.is_dir():
-            raise NotFound("Folder not found")
-        try:
-            entries = await asyncio.to_thread(paths.list_folder, target)
-        except PermissionError:
-            raise Forbidden("Permission denied") from None
-        await lib.attach_positions(self.engine.history, [e for e in entries if not e["is_dir"]])
-        return web.json_response(entries)
+        return web.json_response(await self.engine.browse(Path(raw)))
 
     async def get_settings(self, request: web.Request) -> web.Response:
         return web.json_response(self.engine.settings())
@@ -151,14 +133,6 @@ class _Api:
         auth.require_local(request.headers.get("Authorization"), self.token)
         body = await _json_body(request)
         return web.json_response(self.engine.update_settings(body))
-
-    async def _check_cast_path(self, path: Path, local: bool) -> None:
-        if not local:
-            in_folder = paths.is_under(path, self.engine.config.watch_folders)
-            if not in_folder and not await self.engine.is_in_history(path):
-                raise Forbidden("Path is not in a watch folder")
-        if not path.is_file():
-            raise NotFound("File not found")
 
     async def cast(self, request: web.Request) -> web.Response:
         local = auth.is_local(request.headers.get("Authorization"), self.token)
@@ -169,13 +143,13 @@ class _Api:
             raise BadRequest("resume must be true or false")
         if not path.is_absolute():
             raise BadRequest("path must be absolute")
-        await self._check_cast_path(path, local)
+        await self.engine.check_castable(path, local=local)
         return web.json_response(self.engine.request_cast(path, resume), status=202)
 
     async def play_next(self, request: web.Request) -> web.Response:
         local = auth.is_local(request.headers.get("Authorization"), self.token)
         path = self.engine.next_episode()
-        await self._check_cast_path(path, local)
+        await self.engine.check_castable(path, local=local)
         return web.json_response(self.engine.request_cast(path, False), status=202)
 
     async def toggle(self, request: web.Request) -> web.Response:
@@ -216,7 +190,7 @@ class _Api:
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         self._sockets.add(ws)
-        queue = self.engine.events.subscribe()
+        queue = self.engine.subscribe()
         forwarder: asyncio.Task | None = None
         try:
             await ws.send_json({"type": "state", "data": self.engine.state()})
@@ -226,7 +200,7 @@ class _Api:
         finally:
             if forwarder is not None:
                 forwarder.cancel()
-            self.engine.events.unsubscribe(queue)
+            self.engine.unsubscribe(queue)
             self._sockets.discard(ws)
         return ws
 

@@ -15,6 +15,7 @@ from video_caster import library as lib
 from video_caster.casting.base import DeviceRequestFailed, PlaybackStatus, RequestPin
 from video_caster.catalogue import WATCHED_AT, Catalogue, WatchStates
 from video_caster.config import Config, save_config
+from video_caster.core import paths
 from video_caster.core.errors import BadRequest, Conflict, DeviceError, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
@@ -160,10 +161,33 @@ class Engine:
             "pin_request": self._pin_request,
         }
 
+    def subscribe(self) -> asyncio.Queue:
+        return self.events.subscribe()
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self.events.unsubscribe(queue)
+
+    # -- Library --
+
     async def library(self) -> dict:
         return await lib.build_library(self.config, self.history, self.posters_dir)
 
-    async def is_in_history(self, path: Path) -> bool:
+    async def browse(self, folder: Path | None) -> list[dict]:
+        entries = await asyncio.to_thread(paths.browse, folder, self.config.watch_folders)
+        files = [e for e in entries if not e["is_dir"]]
+        if files:
+            await lib.attach_positions(self.history, files)
+        return entries
+
+    def poster_file(self, name: str) -> Path:
+        return paths.poster_file(self.posters_dir, name)
+
+    async def check_castable(self, path: Path, *, local: bool) -> None:
+        await paths.check_castable(
+            path, self.config.watch_folders, local=local, ever_cast=self._ever_cast
+        )
+
+    async def _ever_cast(self, path: Path) -> bool:
         return await self.history.has_file(str(path))
 
     # -- Devices --

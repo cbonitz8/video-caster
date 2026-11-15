@@ -14,74 +14,6 @@ def at(history, wid, when):
     conn.commit()
 
 
-async def test_has_file(history, video):
-    assert await history.has_file(str(video)) is False
-    await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
-    assert await history.has_file(str(video)) is True
-
-
-async def test_positions_for_only_in_progress(history, watch_dir):
-    playing = make_video(watch_dir / "a.mkv")
-    finished = make_video(watch_dir / "b.mkv")
-    unstarted = make_video(watch_dir / "c.mkv")
-    wid = await history.record_play(str(playing), playing.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(wid, 30.0)
-    wid = await history.record_play(str(finished), finished.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(wid, 95.0)
-    await history.mark_completed(wid)
-    await history.record_play(str(unstarted), unstarted.name, "dev", "Living Room", 100.0)
-    paths = [str(p) for p in (playing, finished, unstarted, watch_dir / "never.mkv")]
-    assert await history.positions_for(paths) == {str(playing): 30.0}
-
-
-async def test_positions_for_empty_list(history):
-    assert await history.positions_for([]) == {}
-
-
-async def test_positions_for_more_paths_than_sqlite_parameters(history, watch_dir):
-    last = make_video(watch_dir / "last.mkv")
-    wid = await history.record_play(str(last), last.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(wid, 7.0)
-    paths = [str(watch_dir / f"f{i}.mkv") for i in range(1200)] + [str(last)]
-    assert await history.positions_for(paths) == {str(last): 7.0}
-
-
-async def test_latest_meaningful_prefers_rewatch_over_completed(history, video):
-    wid = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(wid, 98.0)
-    await history.mark_completed(wid)
-    rewatch = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(rewatch, 40.0)
-    at(history, wid, 1.0)
-    at(history, rewatch, 2.0)
-    rec = (await history.latest_meaningful([str(video)]))[str(video)]
-    assert (rec.id, rec.position, rec.completed) == (rewatch, 40.0, False)
-
-
-async def test_latest_meaningful_ignores_position_zero_rows(history, video):
-    wid = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
-    await history.mark_completed(wid)
-    newer = await history.record_play(str(video), video.name, "dev", "Living Room", 100.0)
-    at(history, wid, 1.0)
-    at(history, newer, 2.0)
-    rec = (await history.latest_meaningful([str(video)]))[str(video)]
-    assert rec.id == wid and rec.completed is True
-
-
-async def test_latest_meaningful_omits_untouched_and_unlisted(history, watch_dir):
-    a = make_video(watch_dir / "a.mkv")
-    await history.record_play(str(a), a.name, "dev", "Living Room", 100.0)
-    assert await history.latest_meaningful([str(a), str(watch_dir / "never.mkv")]) == {}
-
-
-async def test_latest_meaningful_more_paths_than_sqlite_parameters(history, watch_dir):
-    last = make_video(watch_dir / "last.mkv")
-    wid = await history.record_play(str(last), last.name, "dev", "Living Room", 100.0)
-    await history.force_update_position(wid, 7.0)
-    paths = [str(watch_dir / f"f{i}.mkv") for i in range(1200)] + [str(last)]
-    assert list(await history.latest_meaningful(paths)) == [str(last)]
-
-
 async def play(history, path, position, *, completed=False, when=None, duration=100.0):
     wid = await history.record_play(str(path), path.name, "dev", "Living Room", duration)
     if position:
@@ -232,3 +164,38 @@ async def test_newly_added_rows(history, watch_dir, video, tmp_path):
     assert rows[0]["mtime_ago"]
     assert (rows[0]["position"], rows[0]["duration"], rows[0]["watched"]) == (12.0, 100.0, False)
     assert rows[1]["position"] is None
+
+
+async def test_reorganized_files_keep_their_watched_state(history, watch_dir, tmp_path):
+    gone = tmp_path / "gone" / "ted lasso s4"
+    old_e5 = gone / "Ted.Lasso.S04E05.Riches.of.Embarrassment.1080p.HEVC.x265-MeGusta[EZTVx.to].mkv"
+    old_e6 = gone / "Ted.Lasso.S04E06.Dont.Jump.Around.Much.Anymore.1080p.HEVC.x265-MeGusta[EZTVx.to].mkv"
+    season = watch_dir / "Ted Lasso" / "Season 4"
+    e5 = make_video(season / "Ted Lasso - S04E05 - Riches of Embarrassment.mkv")
+    e6 = make_video(season / "Ted Lasso - S04E06 - Don't Jump Around Much Anymore.mkv")
+    e7 = make_video(season / "Ted Lasso - S04E07 - Yes & Baby.mkv")
+    await play(history, old_e5, 95.0, completed=True, when=1.0)
+    await play(history, old_e6, 95.0, completed=True, when=2.0)
+    lib = await build(history, tmp_path, watch_dir)
+    show = lib["shows"][0]
+    assert [e["watched"] for e in show["seasons"][0]["episodes"]] == [True, True, False]
+    assert show["up_next"]["path"] == str(e7)
+    assert [t["path"] for t in lib["continue"]] == [str(e7)]
+
+
+async def test_duplicate_copies_share_one_state(history, watch_dir, tmp_path):
+    old = make_video(watch_dir / "avatar seven havens" / "Avatar Seven Havens - S01E01 - On the Horizon.mkv")
+    new = make_video(watch_dir / "Avatar Seven Havens" / "Season 1" / "Avatar Seven Havens - S01E01 - On the Horizon.mkv")
+    await play(history, old, 95.0, completed=True, when=1.0)
+    await play(history, new, 40.0, when=2.0)
+    episodes = (await build(history, tmp_path, watch_dir))["shows"][0]["seasons"][0]["episodes"]
+    assert [(e["watched"], e["position"]) for e in episodes] == [(False, 40.0), (False, 40.0)]
+
+
+async def test_folder_rows_resume_per_episode(history, watch_dir):
+    old = watch_dir / "old" / "Show.S01E02.mkv"
+    new = make_video(watch_dir / "Show" / "Season 1" / "Show - S01E02 - Two.mkv")
+    await play(history, old, 30.0)
+    rows = [{"path": str(new)}]
+    await library.attach_positions(history, rows)
+    assert rows[0]["position"] == 30.0

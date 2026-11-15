@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from video_caster.casting.base import PairingFailed
+from video_caster.casting.base import PairingFailed, PlaybackStatus
 from video_caster.core.errors import Conflict, NotFound
 from tests.conftest import BEDROOM, LIVING_ROOM, drain, make_video
 
@@ -179,6 +179,71 @@ async def test_current_carries_next_episode(engine, watch_dir):
     assert engine.state()["current"]["next"] == {
         "path": str(e2), "title": "Show", "subtitle": "S01E02 · Second"}
     assert engine.next_episode() == e2
+
+
+async def cast_and_finish(engine, orchestrator, path) -> None:
+    await cast(engine, path)
+    orchestrator.status = PlaybackStatus(state="playing", current_time=95.0, duration=100.0)
+    await engine.tick()
+
+
+async def cast(engine, path) -> None:
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    engine.request_cast(path, resume=False)
+    await engine.cast_task
+
+
+async def test_next_agrees_with_up_next_while_watching_forward(engine, orchestrator, watch_dir):
+    season = watch_dir / "Show" / "Season 1"
+    eps = [make_video(season / f"Show - S01E0{n} - Part {n}.mkv") for n in (1, 2, 4)]
+    eps.append(make_video(watch_dir / "elsewhere" / "Show.S02E01.mkv"))
+    for ep, after in zip(eps, eps[1:]):
+        await cast_and_finish(engine, orchestrator, ep)
+        up_next = (await engine.library())["shows"][0]["up_next"]["path"]
+        assert str(engine.next_episode()) == up_next == str(after)
+
+
+async def test_next_for_a_file_outside_the_watch_folders_comes_from_the_library(engine, watch_dir, tmp_path):
+    outside = make_video(tmp_path / "Movies" / "Ted.Lasso.S04E04.1080p.HEVC.x265-MeGusta[EZTVx.to].mkv")
+    e5 = make_video(watch_dir / "Ted Lasso" / "Season 4" / "Ted Lasso - S04E05 - Riches of Embarrassment.mkv")
+    await cast(engine, outside)
+    assert engine.next_episode() == e5
+
+
+async def test_unmounted_watch_folder_means_no_next_not_a_failed_cast(make_engine, orchestrator, tmp_path, caplog):
+    engine = make_engine(watch_folders=[tmp_path / "stanley"])
+    e1 = make_video(tmp_path / "Show.S01E01.mkv")
+    make_video(tmp_path / "Show.S01E02.mkv")
+    await cast(engine, e1)
+    assert engine.state()["current"]["path"] == str(e1)
+    assert engine.state()["current"]["next"] is None
+    assert "Watch folder does not exist" in caplog.text
+
+
+async def test_failed_scan_means_no_next_not_a_failed_cast(engine, watch_dir, monkeypatch, caplog):
+    async def broken_scan(*args, **kwargs):
+        raise OSError("Host is down")
+
+    monkeypatch.setattr("video_caster.core.engine.scan_watch_folders", broken_scan)
+    e1 = make_video(watch_dir / "Show.S01E01.mkv")
+    make_video(watch_dir / "Show.S01E02.mkv")
+    await cast(engine, e1)
+    assert engine.state()["current"]["path"] == str(e1)
+    assert engine.state()["current"]["next"] is None
+    assert "Host is down" in caplog.text
+
+
+async def test_resume_uses_the_episode_position_from_another_copy(engine, orchestrator, history, watch_dir, tmp_path):
+    old = tmp_path / "gone" / "Show.S01E01.mkv"
+    new = make_video(watch_dir / "Show" / "Season 1" / "Show - S01E01 - Pilot.mkv")
+    wid = await history.record_play(str(old), old.name, "dev", "Living Room", 100.0)
+    await history.force_update_position(wid, 42.0)
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    engine.request_cast(new, resume=True)
+    await engine.cast_task
+    assert ("seek", 42.0) in orchestrator.calls
 
 
 def test_next_episode_needs_current(engine):

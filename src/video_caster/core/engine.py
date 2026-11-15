@@ -11,14 +11,15 @@ from typing import Awaitable, Callable, Protocol
 
 from video_caster import library as lib
 from video_caster.casting.base import PlaybackStatus, RequestPin, StopFailed
+from video_caster.catalogue import WATCHED_AT, Catalogue, WatchStates
 from video_caster.config import Config, save_config
 from video_caster.core.errors import BadRequest, Conflict, DeviceError, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
 from video_caster.posters import POSTERS_DIR
-from video_caster.storage.episode import find_next_episode
 from video_caster.storage.history import HistoryStore
+from video_caster.storage.scanner import scan_watch_folders
 from video_caster.titles import display_title
 from video_caster.utils.network import multicast_blocked
 
@@ -30,7 +31,6 @@ LOCAL_NETWORK_BLOCKED = (
     "is already on, toggle it off and on, then restart the service."
 )
 
-COMPLETED_PROGRESS = 0.9
 _UNSAFE_PATH_CHARS = re.compile(r'["\\\x00-\x1f\x7f]')
 
 
@@ -213,7 +213,7 @@ class Engine:
             await self._release_current("cast")
             await self._orch.cast_file(path, device, self.request_pin)
             status = await self._orch.get_status()
-            next_path = await asyncio.to_thread(find_next_episode, path)
+            next_path = await self._next_after(path)
             watch_id = await self.history.record_play(
                 file_path=str(path),
                 file_name=path.name,
@@ -230,8 +230,9 @@ class Engine:
             self._publish_current()
             self.events.publish("library_changed", None)
             if resume:
-                saved = await self.history.get_saved_position(str(path))
-                if saved > 0:
+                states = WatchStates(await self.history.meaningful_records())
+                saved = states.resume_position(path)
+                if saved is not None:
                     await asyncio.sleep(self._resume_delay)  # let playback start first
                     await self._orch.seek(saved)
         except Exception as e:
@@ -242,6 +243,14 @@ class Engine:
             if self._casting is not None and asyncio.current_task() is self.cast_task:
                 self._casting = None
                 self._publish_current()
+
+    async def _next_after(self, path: Path) -> Path | None:
+        try:
+            files = await scan_watch_folders(self.config.watch_folders, max_depth=10)
+        except OSError as e:
+            log.warning("No next episode: couldn't scan the watch folders: %s", e)
+            return None
+        return Catalogue([f.path for f in files]).next_after(path)
 
     # -- Playback --
 
@@ -256,7 +265,7 @@ class Engine:
                 await self.history.update_position(self._watch_id, status.current_time)
                 if status.duration > 0:
                     await self.history.update_duration(self._watch_id, status.duration)
-                    if status.progress >= COMPLETED_PROGRESS:
+                    if status.progress >= WATCHED_AT:
                         await self.history.mark_completed(self._watch_id)
                         self._watch_id = None
                         self.events.publish("library_changed", None)

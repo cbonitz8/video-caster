@@ -1,15 +1,13 @@
-"""SQLite watch history and session persistence."""
+"""SQLite watch history."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
-log = logging.getLogger(__name__)
+from typing import Callable, TypeVar
 
 SCHEMA = """\
 CREATE TABLE IF NOT EXISTS watch_history (
@@ -30,6 +28,10 @@ CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(last_updated_at 
 
 """
 
+POSITION_WRITE_INTERVAL = 5.0
+
+T = TypeVar("T")
+
 
 @dataclass
 class WatchRecord:
@@ -44,18 +46,21 @@ class WatchRecord:
     position: float
     completed: bool
 
-    @property
-    def progress(self) -> float:
-        if self.duration <= 0:
-            return 0.0
-        return min(self.position / self.duration, 1.0)
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> WatchRecord:
+        return cls(
+            id=row["id"], file_path=row["file_path"], file_name=row["file_name"],
+            device_id=row["device_id"], device_name=row["device_name"],
+            started_at=row["started_at"], last_updated_at=row["last_updated_at"],
+            duration=row["duration"], position=row["position"], completed=bool(row["completed"]),
+        )
 
 
 class HistoryStore:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
-        self._last_position_update: float = 0.0
+        self._last_position_write: dict[int, float] = {}
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -70,159 +75,78 @@ class HistoryStore:
             self._conn.close()
             self._conn = None
 
-    async def _run(self, fn, *args):
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, fn, *args)
+    async def _run(self, work: Callable[[sqlite3.Connection], T]) -> T:
+        return await asyncio.to_thread(lambda: work(self._get_conn()))
 
-    # -- Watch history --
-
-    def _record_play(self, file_path: str, file_name: str, device_id: str,
-                     device_name: str, duration: float) -> int:
-        conn = self._get_conn()
-        now = time.time()
-        # Check for existing incomplete record for this file
-        row = conn.execute(
-            "SELECT id FROM watch_history WHERE file_path = ? AND completed = 0 "
-            "ORDER BY last_updated_at DESC LIMIT 1",
-            (file_path,),
-        ).fetchone()
-        if row:
-            conn.execute(
-                "UPDATE watch_history SET device_id=?, device_name=?, last_updated_at=?, duration=? WHERE id=?",
-                (device_id, device_name, now, duration, row["id"]),
-            )
+    async def _write(self, sql: str, params: tuple) -> None:
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(sql, params)
             conn.commit()
-            return row["id"]
-        cur = conn.execute(
-            "INSERT INTO watch_history (file_path, file_name, device_id, device_name, "
-            "started_at, last_updated_at, duration) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (file_path, file_name, device_id, device_name, now, now, duration),
-        )
-        conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        await self._run(write)
 
     async def record_play(self, file_path: str, file_name: str, device_id: str,
                           device_name: str, duration: float) -> int:
-        return await self._run(self._record_play, file_path, file_name,
-                               device_id, device_name, duration)
-
-    def _update_position(self, watch_id: int, position: float) -> None:
-        now = time.time()
-        # Throttle to every 5 seconds
-        if now - self._last_position_update < 5.0:
-            return
-        self._last_position_update = now
-        conn = self._get_conn()
-        conn.execute(
-            "UPDATE watch_history SET position=?, last_updated_at=? WHERE id=?",
-            (position, now, watch_id),
-        )
-        conn.commit()
+        """The file's unfinished row, refreshed, or a new one."""
+        def record(conn: sqlite3.Connection) -> int:
+            now = time.time()
+            row = conn.execute(
+                "SELECT id FROM watch_history WHERE file_path = ? AND completed = 0 "
+                "ORDER BY last_updated_at DESC LIMIT 1",
+                (file_path,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE watch_history SET device_id=?, device_name=?, last_updated_at=?, duration=? WHERE id=?",
+                    (device_id, device_name, now, duration, row["id"]),
+                )
+                conn.commit()
+                return row["id"]
+            cur = conn.execute(
+                "INSERT INTO watch_history (file_path, file_name, device_id, device_name, "
+                "started_at, last_updated_at, duration) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (file_path, file_name, device_id, device_name, now, now, duration),
+            )
+            conn.commit()
+            return cur.lastrowid
+        return await self._run(record)
 
     async def update_position(self, watch_id: int, position: float) -> None:
-        await self._run(self._update_position, watch_id, position)
-
-    def _force_update_position(self, watch_id: int, position: float) -> None:
-        conn = self._get_conn()
-        conn.execute(
-            "UPDATE watch_history SET position=?, last_updated_at=? WHERE id=?",
-            (position, time.time(), watch_id),
-        )
-        conn.commit()
+        """Save position at most every POSITION_WRITE_INTERVAL seconds per row."""
+        now = time.time()
+        if now - self._last_position_write.get(watch_id, 0.0) < POSITION_WRITE_INTERVAL:
+            return
+        self._last_position_write[watch_id] = now
+        await self._write("UPDATE watch_history SET position=?, last_updated_at=? WHERE id=?",
+                          (position, now, watch_id))
 
     async def force_update_position(self, watch_id: int, position: float) -> None:
-        """Save position immediately, bypassing the throttle. Use on quit."""
-        await self._run(self._force_update_position, watch_id, position)
-
-    def _update_duration(self, watch_id: int, duration: float) -> None:
-        conn = self._get_conn()
-        conn.execute(
-            "UPDATE watch_history SET duration=? WHERE id=? AND duration=0",
-            (duration, watch_id),
-        )
-        conn.commit()
+        """Save position immediately, bypassing the throttle."""
+        await self._write("UPDATE watch_history SET position=?, last_updated_at=? WHERE id=?",
+                          (position, time.time(), watch_id))
 
     async def update_duration(self, watch_id: int, duration: float) -> None:
         """Set the duration if it was initially unknown (0)."""
-        await self._run(self._update_duration, watch_id, duration)
-
-    def _mark_completed(self, watch_id: int) -> None:
-        conn = self._get_conn()
-        conn.execute(
-            "UPDATE watch_history SET completed=1, last_updated_at=? WHERE id=?",
-            (time.time(), watch_id),
-        )
-        conn.commit()
+        await self._write("UPDATE watch_history SET duration=? WHERE id=? AND duration=0",
+                          (duration, watch_id))
 
     async def mark_completed(self, watch_id: int) -> None:
-        await self._run(self._mark_completed, watch_id)
+        await self._write("UPDATE watch_history SET completed=1, last_updated_at=? WHERE id=?",
+                          (time.time(), watch_id))
 
-    def _get_saved_position(self, file_path: str) -> float:
-        conn = self._get_conn()
-        row = conn.execute(
-            "SELECT position FROM watch_history WHERE file_path = ? AND completed = 0 "
-            "ORDER BY last_updated_at DESC LIMIT 1",
-            (file_path,),
-        ).fetchone()
-        return row["position"] if row else 0.0
-
-    async def get_saved_position(self, file_path: str) -> float:
-        return await self._run(self._get_saved_position, file_path)
-
-    def _positions_for(self, file_paths: list[str]) -> dict[str, float]:
-        conn = self._get_conn()
-        positions: dict[str, float] = {}
-        for start in range(0, len(file_paths), 500):
-            chunk = file_paths[start:start + 500]
-            marks = ",".join("?" * len(chunk))
+    async def meaningful_records(self) -> list[WatchRecord]:
+        """Completed or started rows, oldest first; rows a cast left at position 0 don't count."""
+        def fetch(conn: sqlite3.Connection) -> list[WatchRecord]:
             rows = conn.execute(
-                "SELECT file_path, position FROM watch_history "
-                f"WHERE completed = 0 AND position > 0 AND file_path IN ({marks}) "
-                "ORDER BY last_updated_at",
-                chunk,
+                "SELECT * FROM watch_history WHERE completed = 1 OR position > 0 "
+                "ORDER BY last_updated_at, id"
             ).fetchall()
-            for r in rows:
-                positions[r["file_path"]] = r["position"]  # oldest first, so the newest wins
-        return positions
-
-    async def positions_for(self, file_paths: list[str]) -> dict[str, float]:
-        """Saved positions of the in-progress files among file_paths; others are absent."""
-        return await self._run(self._positions_for, file_paths)
-
-    def _latest_meaningful(self, file_paths: list[str]) -> dict[str, WatchRecord]:
-        conn = self._get_conn()
-        latest: dict[str, WatchRecord] = {}
-        for start in range(0, len(file_paths), 500):
-            chunk = file_paths[start:start + 500]
-            marks = ",".join("?" * len(chunk))
-            rows = conn.execute(
-                "SELECT * FROM watch_history "
-                f"WHERE (completed = 1 OR position > 0) AND file_path IN ({marks}) "
-                "ORDER BY last_updated_at, id",
-                chunk,
-            ).fetchall()
-            for r in rows:
-                latest[r["file_path"]] = WatchRecord(
-                    id=r["id"], file_path=r["file_path"], file_name=r["file_name"],
-                    device_id=r["device_id"], device_name=r["device_name"],
-                    started_at=r["started_at"], last_updated_at=r["last_updated_at"],
-                    duration=r["duration"], position=r["position"],
-                    completed=bool(r["completed"]),
-                )
-        return latest
-
-    async def latest_meaningful(self, file_paths: list[str]) -> dict[str, WatchRecord]:
-        """Newest completed-or-started row per file; rows a cast left at position 0 don't count."""
-        return await self._run(self._latest_meaningful, file_paths)
-
-    def _has_file(self, file_path: str) -> bool:
-        conn = self._get_conn()
-        row = conn.execute(
-            "SELECT 1 FROM watch_history WHERE file_path = ? LIMIT 1",
-            (file_path,),
-        ).fetchone()
-        return row is not None
+            return [WatchRecord.from_row(r) for r in rows]
+        return await self._run(fetch)
 
     async def has_file(self, file_path: str) -> bool:
         """True if the file was ever cast, completed or not."""
-        return await self._run(self._has_file, file_path)
+        def fetch(conn: sqlite3.Connection) -> bool:
+            row = conn.execute("SELECT 1 FROM watch_history WHERE file_path = ? LIMIT 1",
+                               (file_path,)).fetchone()
+            return row is not None
+        return await self._run(fetch)

@@ -7,7 +7,7 @@ from pychromecast.error import RequestTimeout
 
 from video_caster.casting.base import PlaybackStatus, StopFailed
 from video_caster.core.errors import BadRequest, DeviceError
-from tests.conftest import LIVING_ROOM, drain, make_video
+from tests.conftest import saved_position, LIVING_ROOM, drain, make_video
 
 
 async def start_casting(engine, video) -> None:
@@ -39,7 +39,7 @@ async def test_tick_saves_position_midway(engine, orchestrator, history, video):
     await start_casting(engine, video)
     orchestrator.status = PlaybackStatus(state="playing", current_time=30.0, duration=100.0)
     await engine.tick()
-    assert await history.get_saved_position(str(video)) == 30.0
+    assert await saved_position(history, video) == 30.0
 
 
 async def test_tick_marks_completed_at_ninety_percent(engine, orchestrator, history, video):
@@ -47,9 +47,8 @@ async def test_tick_marks_completed_at_ninety_percent(engine, orchestrator, hist
     queue = engine.events.subscribe()
     orchestrator.status = PlaybackStatus(state="playing", current_time=95.0, duration=100.0)
     await engine.tick()
-    assert await history.get_saved_position(str(video)) == 0.0  # completed rows don't resume
-    latest = await history.latest_meaningful([str(video)])
-    assert latest[str(video)].completed is True
+    assert await saved_position(history, video) is None
+    assert [r.completed for r in await history.meaningful_records()] == [True]
     assert {"type": "library_changed", "data": None} in drain(queue)
 
 
@@ -98,7 +97,7 @@ async def test_stop_saves_position(engine, orchestrator, history, video):
     await start_casting(engine, video)
     orchestrator.status = PlaybackStatus(state="playing", current_time=33.0, duration=100.0)
     await engine.stop()
-    assert await history.get_saved_position(str(video)) == 33.0
+    assert await saved_position(history, video) == 33.0
     assert ("stop_playback",) in orchestrator.calls
     assert engine.state()["current"] is None
 
@@ -147,7 +146,7 @@ async def test_failed_replacement_clears_current_and_saves_old_position(
     engine.request_cast(other, resume=False)
     await engine.cast_task
     assert engine.state()["current"] is None
-    assert await history.get_saved_position(str(video)) == 40.0
+    assert await saved_position(history, video) == 40.0
 
 
 async def test_a_stop_the_device_refused_is_a_device_error_after_saving(
@@ -161,7 +160,7 @@ async def test_a_stop_the_device_refused_is_a_device_error_after_saving(
     with pytest.raises(DeviceError, match="Living Room didn't stop"):
         await engine.stop()
 
-    assert await history.get_saved_position(str(video)) == 33.0
+    assert await saved_position(history, video) == 33.0
     assert engine.state()["current"] is None
     assert "library_changed" in [e["type"] for e in drain(queue)]
 

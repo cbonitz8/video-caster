@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from video_caster.casting.base import PlaybackStatus
+from video_caster.catalogue import WatchStates
 from video_caster.config import Config
 from video_caster.core.engine import Engine
 from video_caster.discovery.device import Device, DeviceType
@@ -16,6 +17,10 @@ def make_video(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0")
     return path
+
+
+async def saved_position(history: HistoryStore, path: Path) -> float | None:
+    return WatchStates(await history.meaningful_records()).resume_position(path)
 
 
 @pytest.fixture

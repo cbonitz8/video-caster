@@ -6,7 +6,7 @@ import pytest
 
 from video_caster.casting.base import PlaybackStatus
 from video_caster.core.errors import BadRequest, Conflict
-from tests.conftest import LIVING_ROOM, drain
+from tests.conftest import saved_position, LIVING_ROOM, drain
 
 
 async def test_pin_round_trip(engine):
@@ -54,7 +54,7 @@ async def test_shutdown_saves_position(engine, orchestrator, history, video):
     orchestrator.status = PlaybackStatus(state="playing", current_time=21.0, duration=100.0)
     await engine.shutdown()
     reopened = type(history)(history._db_path)
-    assert await reopened.get_saved_position(str(video)) == 21.0
+    assert await saved_position(reopened, video) == 21.0
     reopened.close()
 
 

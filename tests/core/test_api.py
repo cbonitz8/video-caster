@@ -306,13 +306,21 @@ async def test_next_casts_next_episode_from_the_start(client, engine, orchestrat
     assert engine.state()["current"]["path"] == str(e2)
 
 
-async def test_next_outside_watch_folders_needs_local_token(client, engine, tmp_path):
+async def test_next_from_a_file_outside_the_watch_folders_plays_the_library_copy(
+        client, engine, orchestrator, watch_dir, tmp_path):
+    e1 = make_video(tmp_path / "elsewhere" / "Show.S01E01.mkv")
+    e2 = make_video(watch_dir / "Show.S01E02.mkv")
+    await start_playing(client, engine, e1, headers=LOCAL)
+    assert (await client.post("/api/playback/next")).status == 202
+    await engine.cast_task
+    assert ("cast_file", e2, LIVING_ROOM.id) in orchestrator.calls
+
+
+async def test_no_next_for_a_show_only_outside_the_watch_folders(client, engine, tmp_path):
     e1 = make_video(tmp_path / "elsewhere" / "Show.S01E01.mkv")
     make_video(tmp_path / "elsewhere" / "Show.S01E02.mkv")
     await start_playing(client, engine, e1, headers=LOCAL)
-    assert (await client.post("/api/playback/next")).status == 403
-    assert (await client.post("/api/playback/next", headers=LOCAL)).status == 202
-    await engine.cast_task
+    assert (await client.post("/api/playback/next", headers=LOCAL)).status == 409
 
 
 async def test_next_episode_deleted_is_404(client, engine, watch_dir):

@@ -38,11 +38,11 @@ def video(watch_dir) -> Path:
 
 
 LIVING_ROOM = Device(
-    name="Living Room", device_type=DeviceType.CHROMECAST,
+    id="living-room-uuid", name="Living Room", device_type=DeviceType.CHROMECAST,
     address="192.168.10.17", port=8009, model="AI PONT JB",
 )
 BEDROOM = Device(
-    name="Bedroom", device_type=DeviceType.DLNA,
+    id="uuid:bedroom", name="Bedroom", device_type=DeviceType.DLNA,
     address="192.168.10.20", port=1400,
 )
 
@@ -51,7 +51,7 @@ class FakeOrchestrator:
     """Stands in for CastOrchestrator: records calls, no network or ffmpeg."""
 
     def __init__(self) -> None:
-        self.pin_callback = None
+        self.asks_pin = False
         self.status = PlaybackStatus()
         self.calls: list[tuple] = []
         self.cast_error: Exception | None = None
@@ -65,8 +65,10 @@ class FakeOrchestrator:
     async def stop(self) -> None:
         self.calls.append(("stop",))
 
-    async def cast_file(self, file_path, device) -> None:
+    async def cast_file(self, file_path, device, request_pin) -> None:
         self.calls.append(("cast_file", file_path, device.id))
+        if self.asks_pin:
+            await request_pin(device.name)
         if self.cast_gate is not None:
             await self.cast_gate.wait()
         if self.cast_error is not None:

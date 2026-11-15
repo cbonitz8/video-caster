@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from video_caster import library as lib
-from video_caster.casting.base import PlaybackStatus
+from video_caster.casting.base import PlaybackStatus, RequestPin
 from video_caster.config import Config, save_config
 from video_caster.core.errors import BadRequest, Conflict, NotFound
 from video_caster.core.events import EventBus
@@ -35,11 +35,11 @@ _UNSAFE_PATH_CHARS = re.compile(r'["\\\x00-\x1f\x7f]')
 
 
 class Orchestrator(Protocol):
-    pin_callback: Callable[[str, str], Awaitable[str]] | None
-
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    async def cast_file(self, file_path: Path, device: Device) -> None: ...
+    async def cast_file(
+        self, file_path: Path, device: Device, request_pin: RequestPin
+    ) -> None: ...
     async def stop_playback(self) -> None: ...
     async def toggle_pause(self) -> None: ...
     async def seek(self, position: float) -> None: ...
@@ -211,7 +211,7 @@ class Engine:
     async def _cast(self, path: Path, resume: bool, device: Device) -> None:
         try:
             await self._release_current("cast")
-            await self._orch.cast_file(path, device)
+            await self._orch.cast_file(path, device, self.request_pin)
             status = await self._orch.get_status()
             next_path = await asyncio.to_thread(find_next_episode, path)
             watch_id = await self.history.record_play(
@@ -338,7 +338,6 @@ class Engine:
     # -- Lifecycle --
 
     async def start(self) -> None:
-        self._orch.pin_callback = self.pin_callback
         await self._orch.start()
         self.request_scan()
         self._tick_task = asyncio.create_task(self._tick_loop())
@@ -354,11 +353,11 @@ class Engine:
 
     # -- AirPlay pairing --
 
-    async def pin_callback(self, device_name: str, protocol: str) -> str:
+    async def request_pin(self, device_name: str) -> str:
         if self._pin_future is not None and not self._pin_future.done():
             raise Conflict("Another pairing is already waiting for a PIN")
         self._pin_future = asyncio.get_running_loop().create_future()
-        self._pin_request = {"device_name": device_name, "protocol": protocol}
+        self._pin_request = {"device_name": device_name}
         self.events.publish("pin_required", self._pin_request)
         try:
             return await asyncio.wait_for(self._pin_future, self._pin_timeout)

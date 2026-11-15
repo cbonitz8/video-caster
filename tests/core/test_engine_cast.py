@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from video_caster.casting.base import PairingFailed
 from video_caster.core.errors import Conflict, NotFound
 from tests.conftest import BEDROOM, LIVING_ROOM, drain, make_video
 
@@ -89,6 +90,28 @@ async def test_failed_cast_publishes_error(engine, orchestrator, video):
     assert errors == [{"type": "error", "data": {
         "message": "Cast failed: LOAD_FAILED", "source": "cast"}}]
     assert engine.state()["current"] is None
+
+
+async def cast_errors(engine, video) -> list[dict]:
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+    queue = engine.events.subscribe()
+    engine.request_cast(video, resume=False)
+    await engine.cast_task
+    return [e["data"] for e in drain(queue) if e["type"] == "error"]
+
+
+async def test_pairing_failure_reaches_the_phone(engine, orchestrator, video):
+    orchestrator.cast_error = PairingFailed("Pairing with Den failed: bad pin")
+    assert await cast_errors(engine, video) == [
+        {"message": "Cast failed: Pairing with Den failed: bad pin", "source": "cast"}]
+
+
+async def test_pin_timeout_reaches_the_phone(engine, orchestrator, video):
+    orchestrator.asks_pin = True
+    assert await cast_errors(engine, video) == [
+        {"message": "Cast failed: No PIN entered for Living Room within 0s", "source": "cast"}]
+    assert engine.state()["pin_request"] is None
 
 
 async def test_second_cast_cancels_first(engine, orchestrator, watch_dir):

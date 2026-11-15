@@ -12,6 +12,7 @@ dependencies = [
     "pyatv>=0.16.0",
     "aiohttp>=3.9.0",
     "zeroconf>=0.131.0",
+    "ifaddr>=0.2.0",
     "async-upnp-client>=0.43.0",
     "platformdirs>=4.0.0",
     "tomli>=2.0.0; python_version < '3.11'",

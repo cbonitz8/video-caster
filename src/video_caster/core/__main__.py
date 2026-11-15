@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 from video_caster.casting.orchestrator import CastOrchestrator
+from video_caster.casting.sessions import session_opener
 from video_caster.config import CONFIG_DIR, Config, ensure_default_config
 from video_caster.core.api import create_app
 from video_caster.core.auth import new_token, save_token
@@ -24,6 +25,7 @@ from video_caster.storage.history import HistoryStore
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8485
 TOKEN_PATH = CONFIG_DIR / "core-token"
+CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
 TAILNET_HOST = "calebs-macbook-pro.tail02eb7f.ts.net"
 
 log = logging.getLogger("video_caster.core")
@@ -35,7 +37,8 @@ def missing_tools() -> list[str]:
 
 async def serve(port: int, *, config: Config, token_path: Path) -> int:
     POSTERS_DIR.mkdir(parents=True, exist_ok=True)
-    engine = Engine(config, CastOrchestrator(), HistoryStore(config.history_db_path))
+    orchestrator = CastOrchestrator(open_session=session_opener(CREDENTIALS_PATH))
+    engine = Engine(config, orchestrator, HistoryStore(config.history_db_path))
     token = new_token()
     runner = web.AppRunner(create_app(engine, token, extra_hosts=(TAILNET_HOST,)))
     await runner.setup()

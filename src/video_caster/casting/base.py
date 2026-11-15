@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Awaitable, Callable
 
 from video_caster.discovery.device import Device
 
@@ -22,18 +22,31 @@ class PlaybackStatus:
         return min(self.current_time / self.duration, 1.0)
 
 
-class CastHandler(ABC):
-    def __init__(self, device: Device):
+@dataclass(frozen=True)
+class Media:
+    url: str
+    content_type: str
+    title: str
+    duration: float
+
+
+RequestPin = Callable[[str], Awaitable[str]]
+
+
+class PairingFailed(Exception):
+    pass
+
+
+class CredentialsRejected(Exception):
+    pass
+
+
+class CastSession(ABC):
+    def __init__(self, device: Device) -> None:
         self.device = device
 
     @abstractmethod
-    async def connect(self) -> None: ...
-
-    @abstractmethod
-    async def disconnect(self) -> None: ...
-
-    @abstractmethod
-    async def play_media(self, url: str, content_type: str = "video/mp4") -> None: ...
+    async def play(self, media: Media) -> None: ...
 
     @abstractmethod
     async def pause(self) -> None: ...
@@ -52,3 +65,9 @@ class CastHandler(ABC):
 
     @abstractmethod
     async def get_status(self) -> PlaybackStatus: ...
+
+    @abstractmethod
+    async def close(self) -> None: ...
+
+
+OpenSession = Callable[[Device, RequestPin], Awaitable[CastSession]]

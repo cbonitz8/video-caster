@@ -1,6 +1,8 @@
 import errno
 import socket
 
+import ifaddr
+
 
 def get_local_ip() -> str:
     """Get the local LAN IP address by connecting to a public DNS server."""
@@ -31,3 +33,12 @@ def multicast_blocked() -> bool:
                 return True
             raise
     return False
+
+
+def host_addresses() -> set[str]:
+    return {
+        ip.ip
+        for adapter in ifaddr.get_adapters()
+        for ip in adapter.ips
+        if isinstance(ip.ip, str)
+    }

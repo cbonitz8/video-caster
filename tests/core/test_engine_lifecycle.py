@@ -11,9 +11,9 @@ from tests.conftest import LIVING_ROOM, drain
 
 async def test_pin_round_trip(engine):
     queue = engine.events.subscribe()
-    waiter = asyncio.create_task(engine.pin_callback("Bedroom TV", "AirPlay"))
+    waiter = asyncio.create_task(engine.request_pin("Bedroom TV"))
     await asyncio.sleep(0)
-    assert engine.state()["pin_request"] == {"device_name": "Bedroom TV", "protocol": "AirPlay"}
+    assert engine.state()["pin_request"] == {"device_name": "Bedroom TV"}
     engine.submit_pin("1234")
     assert await waiter == "1234"
     assert [e["type"] for e in drain(queue)] == ["pin_required", "pin_resolved"]
@@ -22,7 +22,7 @@ async def test_pin_round_trip(engine):
 
 async def test_pin_times_out(engine):
     with pytest.raises(TimeoutError, match="No PIN entered for Bedroom TV"):
-        await engine.pin_callback("Bedroom TV", "AirPlay")
+        await engine.request_pin("Bedroom TV")
     assert engine.state()["pin_request"] is None
 
 
@@ -33,7 +33,6 @@ def test_submit_pin_without_request(engine):
 
 async def test_start_and_shutdown(engine, orchestrator, video):
     await engine.start()
-    assert orchestrator.pin_callback == engine.pin_callback
     await asyncio.sleep(0.05)  # first scan and a few ticks
     assert [d["id"] for d in engine.state()["devices"]][0] == LIVING_ROOM.id
 

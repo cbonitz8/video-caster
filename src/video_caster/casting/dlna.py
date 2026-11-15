@@ -6,10 +6,10 @@ import logging
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from async_upnp_client.aiohttp import AiohttpRequester
-from async_upnp_client.client import UpnpDevice, UpnpService
+from async_upnp_client.client import UpnpService
 from async_upnp_client.client_factory import UpnpFactory
 
-from video_caster.casting.base import CastHandler, PlaybackStatus
+from video_caster.casting.base import CastSession, Media, PlaybackStatus
 from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
@@ -40,88 +40,65 @@ def _didl_metadata(title: str, content_type: str = "video/mp4") -> str:
     return tostring(root, encoding="unicode", xml_declaration=False)
 
 
-class DLNAHandler(CastHandler):
-    def __init__(self, device: Device) -> None:
+AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
+
+
+async def open_dlna(device: Device) -> DLNASession:
+    log.info("Connecting to DLNA device: %s", device.name)
+    if not device.location:
+        raise RuntimeError(f"No description URL for DLNA device {device.name}")
+    upnp_device = await UpnpFactory(AiohttpRequester()).async_create_device(device.location)
+    av_transport = upnp_device.service(AV_TRANSPORT)
+    if not av_transport:
+        raise RuntimeError(f"Device {device.name} has no AVTransport service")
+    log.info("Connected to DLNA device: %s (%s)", device.name, device.model)
+    return DLNASession(device, av_transport, upnp_device.service(RENDERING_CONTROL))
+
+
+class DLNASession(CastSession):
+    def __init__(
+        self,
+        device: Device,
+        av_transport: UpnpService,
+        rendering_control: UpnpService | None,
+    ) -> None:
         super().__init__(device)
-        self._upnp_device: UpnpDevice | None = None
-        self._av_transport: UpnpService | None = None
-        self._rendering_control: UpnpService | None = None
-        self._requester: AiohttpRequester | None = None
-        self._title: str = ""
+        self._av_transport = av_transport
+        self._rendering_control = rendering_control
+        self._title = ""
 
-    async def connect(self) -> None:
-        log.info("Connecting to DLNA device: %s", self.device.name)
-        location = self.device.protocol_config.get("location")
-        if not location:
-            raise RuntimeError(f"No description URL for DLNA device {self.device.name}")
+    async def close(self) -> None:
+        pass
 
-        self._requester = AiohttpRequester()
-        factory = UpnpFactory(self._requester)
-        self._upnp_device = await factory.async_create_device(location)
-
-        # Update device name from description if we only had a UUID
-        if self._upnp_device.friendly_name:
-            self.device.name = self._upnp_device.friendly_name
-            if self._upnp_device.model_name:
-                self.device.model = self._upnp_device.model_name
-
-        avt_type = "urn:schemas-upnp-org:service:AVTransport:1"
-        rc_type = "urn:schemas-upnp-org:service:RenderingControl:1"
-
-        self._av_transport = self._upnp_device.service(avt_type)
-        if not self._av_transport:
-            raise RuntimeError(f"Device {self.device.name} has no AVTransport service")
-
-        self._rendering_control = self._upnp_device.service(rc_type)
-
-        log.info("Connected to DLNA device: %s (%s)",
-                 self.device.name, self.device.model)
-
-    async def disconnect(self) -> None:
-        self._requester = None
-        self._upnp_device = None
-        self._av_transport = None
-        self._rendering_control = None
-
-    async def play_media(self, url: str, content_type: str = "video/mp4") -> None:
-        if not self._av_transport:
-            raise RuntimeError("Not connected")
-
-        self._title = url.rsplit("/", 1)[-1] if "/" in url else "Video"
-        metadata = _didl_metadata(self._title, content_type)
-
+    async def play(self, media: Media) -> None:
+        self._title = media.title
         set_uri = self._av_transport.action("SetAVTransportURI")
         await set_uri.async_call(
             InstanceID=0,
-            CurrentURI=url,
-            CurrentURIMetaData=metadata,
+            CurrentURI=media.url,
+            CurrentURIMetaData=_didl_metadata(media.title, media.content_type),
         )
-
         play = self._av_transport.action("Play")
         await play.async_call(InstanceID=0, Speed="1")
-        log.info("DLNA playback started: %s", url)
+        log.info("DLNA playback started: %s", media.url)
 
     async def pause(self) -> None:
-        if self._av_transport:
-            action = self._av_transport.action("Pause")
-            await action.async_call(InstanceID=0)
+        action = self._av_transport.action("Pause")
+        await action.async_call(InstanceID=0)
 
     async def resume(self) -> None:
-        if self._av_transport:
-            action = self._av_transport.action("Play")
-            await action.async_call(InstanceID=0, Speed="1")
+        action = self._av_transport.action("Play")
+        await action.async_call(InstanceID=0, Speed="1")
 
     async def stop(self) -> None:
-        if self._av_transport:
-            try:
-                action = self._av_transport.action("Stop")
-                await action.async_call(InstanceID=0)
-            except Exception:
-                pass
+        try:
+            action = self._av_transport.action("Stop")
+            await action.async_call(InstanceID=0)
+        except Exception:
+            pass
 
     async def seek(self, position: float) -> None:
-        if not self._av_transport:
-            return
         h = int(position) // 3600
         m = (int(position) % 3600) // 60
         s = int(position) % 60
@@ -132,15 +109,12 @@ class DLNAHandler(CastHandler):
     async def set_volume(self, level: float) -> None:
         if not self._rendering_control:
             return
-        # CastHandler uses 0.0-1.0, DLNA uses 0-100
+        # CastSession uses 0.0-1.0, DLNA uses 0-100
         volume = int(level * 100)
         action = self._rendering_control.action("SetVolume")
         await action.async_call(InstanceID=0, Channel="Master", DesiredVolume=volume)
 
     async def get_status(self) -> PlaybackStatus:
-        if not self._av_transport:
-            return PlaybackStatus()
-
         try:
             pos_action = self._av_transport.action("GetPositionInfo")
             pos_info = await pos_action.async_call(InstanceID=0)

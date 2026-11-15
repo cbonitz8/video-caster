@@ -7,10 +7,13 @@ import logging
 import uuid
 from pathlib import Path
 
-from video_caster.casting.airplay import AirPlayHandler
-from video_caster.casting.base import CastHandler, PlaybackStatus
-from video_caster.casting.chromecast import ChromecastHandler
-from video_caster.casting.dlna import DLNAHandler
+from video_caster.casting.base import (
+    CastSession,
+    Media,
+    OpenSession,
+    PlaybackStatus,
+    RequestPin,
+)
 from video_caster.discovery.device import Device, DeviceType
 from video_caster.server.media_server import MediaServer
 from video_caster.transcoding.formats import needs_transcode
@@ -32,62 +35,44 @@ HLS_FAR_SEEK_THRESHOLD = 5  # segments
 
 
 class CastOrchestrator:
-    def __init__(self) -> None:
+    def __init__(self, open_session: OpenSession) -> None:
         self.server = MediaServer()
+        self._open_session = open_session
         self._transcoder = Transcoder()  # used for DLNA fallback path
         self._hls = HLSTranscoder()
-        self._handler: CastHandler | None = None
-        self._current_device: Device | None = None
+        self._session: CastSession | None = None
         self._current_stream_id: str | None = None
         self._current_cast: dict | None = None
-        self.pin_callback = None  # async fn(device_name, protocol) -> str, set by UI
 
     async def start(self) -> None:
         await self.server.start()
 
     async def stop(self) -> None:
         await self.stop_playback()
+        if self._session is not None:
+            session, self._session = self._session, None
+            await session.close()
         await self.server.stop()
 
-    async def connect_device(self, device: Device) -> CastHandler:
-        if self._handler:
-            await self._handler.disconnect()
+    async def _switch_to(self, device: Device, request_pin: RequestPin) -> None:
+        old, self._session = self._session, None
+        if old is not None:
+            try:
+                await old.stop()
+            except Exception:
+                log.warning("Couldn't stop %s before switching", old.device.name, exc_info=True)
+            try:
+                await old.close()
+            except Exception:
+                log.warning("Couldn't close %s before switching", old.device.name, exc_info=True)
+        self._session = await self._open_session(device, request_pin)
 
-        if device.device_type == DeviceType.CHROMECAST:
-            handler = ChromecastHandler(device)
-        elif device.device_type == DeviceType.DLNA:
-            handler = DLNAHandler(device)
-        else:
-            handler = AirPlayHandler(device)
-
-        await handler.connect()
-        self._handler = handler
-        self._current_device = device
-        return handler
-
-    async def _ensure_airplay_paired(self, device: Device) -> None:
-        """Pair with Apple TV if not already authenticated."""
-        if device.device_type != DeviceType.APPLETV:
-            return
-        if not self.pin_callback:
-            raise RuntimeError("No PIN callback set — cannot pair with Apple TV")
-
-        handler = AirPlayHandler(device)
-        await handler.pair(self.pin_callback)
-
-        if self._handler:
-            await self._handler.disconnect()
-        handler2 = AirPlayHandler(device)
-        await handler2.connect()
-        self._handler = handler2
-        self._current_device = device
-
-    async def cast_file(self, file_path: Path, device: Device) -> None:
+    async def cast_file(self, file_path: Path, device: Device, request_pin: RequestPin) -> None:
         """Probe, transcode if needed, serve, and cast a file."""
         log.info("Casting %s to %s", file_path.name, device.name)
 
-        if self._current_device != device or self._handler is None:
-            await self.connect_device(device)
+        if self._session is None or self._session.device.id != device.id:
+            await self._switch_to(device, request_pin)
 
         await self.stop_playback()
 
@@ -148,48 +133,9 @@ class CastOrchestrator:
             "copy_video": copy_video,
             "segment_starts": segment_starts,
         }
-        await self._play_with_auth_retry(
-            device, url=url, title=title, duration=duration, content_type=content_type
+        await self._session.play(
+            Media(url=url, content_type=content_type, title=title, duration=duration)
         )
-
-    async def _play_with_auth_retry(
-        self,
-        device: Device,
-        *,
-        url: str,
-        title: str = "",
-        duration: float = 0.0,
-        content_type: str = "video/mp4",
-    ) -> None:
-        """Play media, retrying with pairing if auth fails (Apple TV)."""
-        try:
-            await self._do_play(url, title=title, duration=duration, content_type=content_type)
-        except Exception as e:
-            err_msg = str(e).lower()
-            if any(kw in err_msg for kw in ("auth", "credentials", "not_permitted", "forbidden", "not implemented")):
-                log.info("Auth/protocol failed, attempting pairing for %s", device.name)
-                await self._ensure_airplay_paired(device)
-                await self._do_play(url, title=title, duration=duration, content_type=content_type)
-            else:
-                raise
-
-    async def _do_play(
-        self,
-        url: str,
-        *,
-        title: str = "",
-        duration: float = 0.0,
-        content_type: str = "video/mp4",
-    ) -> None:
-        """Send play command to the current handler."""
-        if isinstance(self._handler, ChromecastHandler):
-            await self._handler.play_media(
-                url, content_type=content_type, title=title, duration=duration
-            )
-        elif isinstance(self._handler, DLNAHandler):
-            await self._handler.play_media(url)
-        else:
-            await self._handler.play_media(url)
 
     async def _serve_hls(
         self,
@@ -295,9 +241,9 @@ class CastOrchestrator:
         return self.server.register_stream(stream_id, stream, device_ip)
 
     async def stop_playback(self) -> None:
-        if self._handler:
+        if self._session:
             try:
-                await self._handler.stop()
+                await self._session.stop()
             except Exception:
                 pass
 
@@ -310,15 +256,15 @@ class CastOrchestrator:
             self._current_stream_id = None
 
     async def toggle_pause(self) -> None:
-        if self._handler:
-            status = await self._handler.get_status()
+        if self._session:
+            status = await self._session.get_status()
             if status.state == "playing":
-                await self._handler.pause()
+                await self._session.pause()
             else:
-                await self._handler.resume()
+                await self._session.resume()
 
     async def seek(self, position: float) -> None:
-        if not self._handler:
+        if not self._session:
             return
 
         # Native seek works for: direct files (server Range), and HLS (receiver
@@ -329,7 +275,7 @@ class CastOrchestrator:
             or not self._current_cast.get("transcoded")
             or self._current_cast.get("use_hls")
         ):
-            await self._handler.seek(position)
+            await self._session.seek(position)
             return
 
         # DLNA transcoded path (fragmented mp4 pipe): restart ffmpeg at offset.
@@ -347,13 +293,15 @@ class CastOrchestrator:
             cast["device"].address,
             seek_to=position,
         )
-        await self._do_play(url, title=cast["title"], duration=cast["duration"])
+        await self._session.play(
+            Media(url=url, content_type="video/mp4", title=cast["title"], duration=cast["duration"])
+        )
 
     async def set_volume(self, level: float) -> None:
-        if self._handler:
-            await self._handler.set_volume(max(0.0, min(1.0, level)))
+        if self._session:
+            await self._session.set_volume(max(0.0, min(1.0, level)))
 
     async def get_status(self) -> PlaybackStatus:
-        if self._handler:
-            return await self._handler.get_status()
+        if self._session:
+            return await self._session.get_status()
         return PlaybackStatus()

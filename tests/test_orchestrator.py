@@ -5,10 +5,8 @@ import subprocess
 
 import pytest
 
-from pychromecast.error import RequestTimeout
-
 from video_caster.casting.base import (
-    CastSession, Media, PairingFailed, PlaybackStatus, StopFailed,
+    CastSession, DeviceRequestFailed, Media, PairingFailed, PlaybackStatus,
 )
 from video_caster.casting.orchestrator import CastOrchestrator
 from video_caster.casting.stream_plan import Direct, Pipe, Stream
@@ -249,9 +247,9 @@ async def test_a_seek_after_stop_does_nothing(faked, adapters, clip):
 
 async def test_stop_tears_down_even_when_the_device_refuses(faked, adapters, streams, clip):
     await faked.cast_file(clip, BOX, no_pin)
-    adapters.sessions[0].stop_error = OSError("701 Transition not available")
+    adapters.sessions[0].stop_error = DeviceRequestFailed("Box didn't stop: 701")
 
-    with pytest.raises(StopFailed, match="Box didn't stop: 701"):
+    with pytest.raises(DeviceRequestFailed, match="Box didn't stop: 701"):
         await faked.stop_playback()
 
     assert adapters.log[-1] == ("teardown", Direct())
@@ -259,11 +257,10 @@ async def test_stop_tears_down_even_when_the_device_refuses(faked, adapters, str
     assert ("stream_seek", 5.0) not in adapters.log
 
 
-@pytest.mark.parametrize("timeout", [TimeoutError("slow"), RequestTimeout("stop", 10.0)])
-async def test_a_stop_timeout_is_not_wrapped(faked, adapters, clip, timeout):
+async def test_a_stop_timeout_reaches_the_caller_after_teardown(faked, adapters, clip):
     await faked.cast_file(clip, TV, no_pin)
-    adapters.sessions[0].stop_error = timeout
-    with pytest.raises(type(timeout)):
+    adapters.sessions[0].stop_error = TimeoutError("slow")
+    with pytest.raises(TimeoutError):
         await faked.stop_playback()
     assert adapters.log[-1][0] == "teardown"
 

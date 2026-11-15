@@ -6,11 +6,13 @@ import asyncio
 import dataclasses
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from video_caster import library as lib
-from video_caster.casting.base import PlaybackStatus, RequestPin, StopFailed
+from video_caster.casting.base import DeviceRequestFailed, PlaybackStatus, RequestPin
 from video_caster.catalogue import WATCHED_AT, Catalogue, WatchStates
 from video_caster.config import Config, save_config
 from video_caster.core.errors import BadRequest, Conflict, DeviceError, NotFound
@@ -58,6 +60,14 @@ def status_dict(status: PlaybackStatus, current_path: Path | None) -> dict:
         "volume": status.volume,
         "title": title,
     }
+
+
+@contextmanager
+def _device_request() -> Iterator[None]:
+    try:
+        yield
+    except DeviceRequestFailed as e:
+        raise DeviceError(str(e)) from e
 
 
 def file_entry(path: Path) -> dict:
@@ -284,7 +294,8 @@ class Engine:
             await asyncio.sleep(self._tick_interval)
 
     async def toggle_pause(self) -> None:
-        await self._orch.toggle_pause()
+        with _device_request():
+            await self._orch.toggle_pause()
 
     async def seek(self, position: float | None = None, offset: float | None = None) -> None:
         if (position is None) == (offset is None):
@@ -296,7 +307,8 @@ class Engine:
                 target = min(target, status.duration)
         else:
             target = max(0.0, position)
-        await self._orch.seek(target)
+        with _device_request():
+            await self._orch.seek(target)
 
     def next_episode(self) -> Path:
         if self._current_path is None:
@@ -307,7 +319,8 @@ class Engine:
 
     async def set_volume(self, level: float) -> None:
         self.volume = max(0.0, min(1.0, level))
-        await self._orch.set_volume(self.volume)
+        with _device_request():
+            await self._orch.set_volume(self.volume)
 
     async def stop(self) -> None:
         had_pending = self._pending is not None
@@ -317,9 +330,8 @@ class Engine:
         await self._cancel_cast()
         await self._release_current("stop")
         try:
-            await self._orch.stop_playback()
-        except StopFailed as e:
-            raise DeviceError(str(e)) from e
+            with _device_request():
+                await self._orch.stop_playback()
         finally:
             self.events.publish("library_changed", None)
 

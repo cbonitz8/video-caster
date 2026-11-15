@@ -9,7 +9,16 @@ from pathlib import Path
 
 import pyatv
 from pyatv.const import DeviceState, PairingRequirement, Protocol
-from pyatv.exceptions import AuthenticationError, PairingError
+from pyatv.exceptions import (
+    AuthenticationError,
+    BlockedStateError,
+    CommandError,
+    ConnectionLostError,
+    OperationTimeoutError,
+    PairingError,
+    PlaybackError,
+    ProtocolError,
+)
 
 from video_caster.casting.base import (
     CastSession,
@@ -18,12 +27,15 @@ from video_caster.casting.base import (
     PairingFailed,
     PlaybackStatus,
     RequestPin,
+    device_request,
 )
 from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
 
 SCAN_TIMEOUT = 5
+
+_REQUEST_FAILURES = (ConnectionLostError, CommandError, PlaybackError, BlockedStateError, ProtocolError)
 
 _STATE_MAP = {
     DeviceState.Playing: "playing",
@@ -131,21 +143,31 @@ class AirPlaySession(CastSession):
         except AuthenticationError as e:
             raise _rejected(self.device, self._credentials_path, e) from e
 
+    def _request(self, action: str):
+        return device_request(
+            self.device, action, timeouts=(OperationTimeoutError,), failures=_REQUEST_FAILURES
+        )
+
     async def pause(self) -> None:
-        await self._atv.remote_control.pause()
+        with self._request("pause"):
+            await self._atv.remote_control.pause()
 
     async def resume(self) -> None:
-        await self._atv.remote_control.play()
+        with self._request("resume"):
+            await self._atv.remote_control.play()
 
     async def stop(self) -> None:
-        await self._atv.remote_control.stop()
+        with self._request("stop"):
+            await self._atv.remote_control.stop()
 
     async def seek(self, position: float) -> None:
-        await self._atv.remote_control.set_position(int(position))
+        with self._request("seek"):
+            await self._atv.remote_control.set_position(int(position))
 
     async def set_volume(self, level: float) -> None:
         if self._atv.audio:
-            await self._atv.audio.set_volume(level * 100)
+            with self._request("change volume"):
+                await self._atv.audio.set_volume(level * 100)
 
     async def get_status(self) -> PlaybackStatus:
         try:

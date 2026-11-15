@@ -5,10 +5,19 @@ from types import SimpleNamespace
 
 import pytest
 from pyatv.const import PairingRequirement, Protocol
-from pyatv.exceptions import AuthenticationError, PairingError
+from pyatv.exceptions import (
+    AuthenticationError,
+    BlockedStateError,
+    CommandError,
+    ConnectionLostError,
+    HttpError,
+    OperationTimeoutError,
+    PairingError,
+    PlaybackError,
+)
 
-from video_caster.casting.airplay import open_airplay
-from video_caster.casting.base import CredentialsRejected, Media, PairingFailed
+from video_caster.casting.airplay import AirPlaySession, open_airplay
+from video_caster.casting.base import CredentialsRejected, DeviceRequestFailed, Media, PairingFailed
 from video_caster.discovery.device import Device, DeviceType
 
 DEN = Device(id="atv-id", name="Den", device_type=DeviceType.APPLETV, address="192.0.2.30")
@@ -213,3 +222,51 @@ async def test_device_missing_from_unicast_scan_raises(creds):
     fake.scan = nothing
     with pytest.raises(RuntimeError, match="Den"):
         await open_airplay(DEN, PinPad(), credentials_path=creds, pyatv=fake)
+
+
+class RefusingAppleTV:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.remote_control = SimpleNamespace(
+            pause=self._refuse, play=self._refuse, stop=self._refuse, set_position=self._refuse,
+        )
+        self.audio = SimpleNamespace(set_volume=self._refuse)
+
+    async def _refuse(self, *args) -> None:
+        raise self.error
+
+
+CONTROLS = [
+    ("pause", (), "pause"),
+    ("resume", (), "resume"),
+    ("stop", (), "stop"),
+    ("seek", (12.0,), "seek"),
+    ("set_volume", (0.5,), "change volume"),
+]
+
+
+@pytest.mark.parametrize("method, args, action", CONTROLS)
+@pytest.mark.parametrize("error", [
+    CommandError("refused"),
+    ConnectionLostError("gone"),
+    PlaybackError("no"),
+    BlockedStateError("blocked"),
+    HttpError("bad", 500),
+])
+async def test_a_refused_request_is_a_device_request_failure(creds, method, args, action, error):
+    session = AirPlaySession(DEN, RefusingAppleTV(error), creds)
+    with pytest.raises(DeviceRequestFailed, match=f"Den didn't {action}"):
+        await getattr(session, method)(*args)
+
+
+@pytest.mark.parametrize("method, args, action", CONTROLS)
+async def test_a_request_timeout_is_a_plain_timeout(creds, method, args, action):
+    session = AirPlaySession(DEN, RefusingAppleTV(OperationTimeoutError("slow")), creds)
+    with pytest.raises(TimeoutError, match=f"Den didn't answer {action}"):
+        await getattr(session, method)(*args)
+
+
+async def test_an_unexpected_error_is_not_dressed_up_as_a_device_failure(creds):
+    session = AirPlaySession(DEN, RefusingAppleTV(KeyError("bug")), creds)
+    with pytest.raises(KeyError):
+        await session.pause()

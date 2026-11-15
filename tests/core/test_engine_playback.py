@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pychromecast.error import RequestTimeout
 
-from video_caster.casting.base import PlaybackStatus, StopFailed
+from video_caster.casting.base import DeviceRequestFailed, PlaybackStatus
 from video_caster.core.errors import BadRequest, DeviceError
 from tests.conftest import saved_position, LIVING_ROOM, drain, make_video
 
@@ -113,9 +112,20 @@ async def test_stop_still_stops_when_status_fails(engine, orchestrator, video):
 
 
 async def test_device_timeout_propagates(engine, orchestrator):
-    orchestrator.command_error = RequestTimeout("play", 10.0)
-    with pytest.raises(RequestTimeout):
+    orchestrator.command_error = TimeoutError("Living Room didn't answer pause")
+    with pytest.raises(TimeoutError):
         await engine.toggle_pause()
+
+
+@pytest.mark.parametrize("command", [
+    lambda engine: engine.toggle_pause(),
+    lambda engine: engine.seek(position=12.0),
+    lambda engine: engine.set_volume(0.5),
+])
+async def test_a_request_the_device_refused_is_a_device_error(engine, orchestrator, command):
+    orchestrator.command_error = DeviceRequestFailed("Living Room didn't pause: Failed to execute play")
+    with pytest.raises(DeviceError, match="Living Room didn't pause"):
+        await command(engine)
 
 
 async def test_stop_cancels_a_cast_still_loading(engine, orchestrator, video):
@@ -137,6 +147,7 @@ async def test_stop_forgets_a_waiting_file(engine, video):
     assert engine.state()["pending"] is None
 
 
+
 async def test_failed_replacement_clears_current_and_saves_old_position(
         engine, orchestrator, history, watch_dir, video):
     await start_casting(engine, video)
@@ -154,7 +165,7 @@ async def test_a_stop_the_device_refused_is_a_device_error_after_saving(
 ):
     await start_casting(engine, video)
     orchestrator.status = PlaybackStatus(state="playing", current_time=33.0, duration=100.0)
-    orchestrator.command_error = StopFailed("Living Room didn't stop: 701")
+    orchestrator.command_error = DeviceRequestFailed("Living Room didn't stop: 701")
     queue = engine.events.subscribe()
 
     with pytest.raises(DeviceError, match="Living Room didn't stop"):
@@ -167,6 +178,6 @@ async def test_a_stop_the_device_refused_is_a_device_error_after_saving(
 
 async def test_a_stop_timeout_stays_a_timeout(engine, orchestrator, video):
     await start_casting(engine, video)
-    orchestrator.command_error = RequestTimeout("stop", 10.0)
-    with pytest.raises(RequestTimeout):
+    orchestrator.command_error = TimeoutError("Living Room didn't answer stop")
+    with pytest.raises(TimeoutError):
         await engine.stop()

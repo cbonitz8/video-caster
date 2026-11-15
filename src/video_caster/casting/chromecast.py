@@ -9,8 +9,9 @@ from uuid import UUID
 
 import pychromecast
 from pychromecast.config import APP_MEDIA_RECEIVER
+from pychromecast.error import PyChromecastError, RequestTimeout
 
-from video_caster.casting.base import CastSession, Media, PlaybackStatus
+from video_caster.casting.base import CastSession, Media, PlaybackStatus, device_request
 from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
@@ -61,20 +62,24 @@ class ChromecastSession(CastSession):
 
         await _run_sync(_play)
 
+    async def _request(self, action: str, fn, *args) -> None:
+        with device_request(self.device, action, timeouts=(RequestTimeout,), failures=(PyChromecastError,)):
+            await _run_sync(fn, *args)
+
     async def pause(self) -> None:
-        await _run_sync(self._cast.media_controller.pause)
+        await self._request("pause", self._cast.media_controller.pause)
 
     async def resume(self) -> None:
-        await _run_sync(self._cast.media_controller.play)
+        await self._request("resume", self._cast.media_controller.play)
 
     async def stop(self) -> None:
-        await _run_sync(self._cast.media_controller.stop)
+        await self._request("stop", self._cast.media_controller.stop)
 
     async def seek(self, position: float) -> None:
-        await _run_sync(self._cast.media_controller.seek, position)
+        await self._request("seek", self._cast.media_controller.seek, position)
 
     async def set_volume(self, level: float) -> None:
-        await _run_sync(self._cast.set_volume, level)
+        await self._request("change volume", self._cast.set_volume, level)
 
     async def get_status(self) -> PlaybackStatus:
         def _get():

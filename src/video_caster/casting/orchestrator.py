@@ -5,14 +5,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from pychromecast.error import RequestTimeout
-
 from video_caster.casting.base import (
     CastSession,
     OpenSession,
     PlaybackStatus,
     RequestPin,
-    StopFailed,
 )
 from video_caster.casting.stream_plan import (
     OpenStream,
@@ -87,7 +84,7 @@ class CastOrchestrator:
         stream, self._stream = self._stream, None
         try:
             if self._session is not None:
-                await _stop_device(self._session)
+                await self._session.stop()
         finally:
             if stream is not None:
                 await stream.teardown()
@@ -113,12 +110,3 @@ class CastOrchestrator:
         if self._session:
             return await self._session.get_status()
         return PlaybackStatus()
-
-
-async def _stop_device(session: CastSession) -> None:
-    try:
-        await session.stop()
-    except (TimeoutError, RequestTimeout):
-        raise
-    except Exception as e:
-        raise StopFailed(f"{session.device.name} didn't stop: {e}") from e

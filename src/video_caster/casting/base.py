@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -41,8 +43,24 @@ class CredentialsRejected(Exception):
     pass
 
 
-class StopFailed(Exception):
+class DeviceRequestFailed(Exception):
     pass
+
+
+@contextmanager
+def device_request(
+    device: Device,
+    action: str,
+    *,
+    timeouts: tuple[type[BaseException], ...],
+    failures: tuple[type[BaseException], ...],
+) -> Iterator[None]:
+    try:
+        yield
+    except timeouts as e:
+        raise TimeoutError(f"{device.name} didn't answer {action}: {e}") from e
+    except failures as e:
+        raise DeviceRequestFailed(f"{device.name} didn't {action}: {e}") from e
 
 
 class CastSession(ABC):

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from pychromecast.config import APP_MEDIA_RECEIVER
+from pychromecast.error import RequestFailed, RequestTimeout
 
-from video_caster.casting.base import Media
+from video_caster.casting.base import DeviceRequestFailed, Media
 from video_caster.casting.chromecast import ChromecastSession, open_chromecast
 from video_caster.discovery.device import Device, DeviceType
 
@@ -87,3 +89,42 @@ async def test_reopen_after_close_uses_a_fresh_cast(monkeypatch):
     assert len(built) == 2
     assert built[0].stopped
     assert built[1].started
+
+
+class RefusingMediaController:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def _refuse(self, *args) -> None:
+        raise self.error
+
+    pause = play = stop = seek = _refuse
+
+
+class RefusingCast:
+    def __init__(self, error: Exception) -> None:
+        self.media_controller = RefusingMediaController(error)
+        self.set_volume = self.media_controller._refuse
+
+
+CONTROLS = [
+    ("pause", (), "pause"),
+    ("resume", (), "resume"),
+    ("stop", (), "stop"),
+    ("seek", (12.0,), "seek"),
+    ("set_volume", (0.5,), "change volume"),
+]
+
+
+@pytest.mark.parametrize("method, args, action", CONTROLS)
+async def test_a_refused_request_is_a_device_request_failure(method, args, action):
+    session = ChromecastSession(LIVING_ROOM, RefusingCast(RequestFailed("play")))
+    with pytest.raises(DeviceRequestFailed, match=f"Living Room didn't {action}: Failed to execute play"):
+        await getattr(session, method)(*args)
+
+
+@pytest.mark.parametrize("method, args, action", CONTROLS)
+async def test_a_request_timeout_is_a_plain_timeout(method, args, action):
+    session = ChromecastSession(LIVING_ROOM, RefusingCast(RequestTimeout("pause", 10.0)))
+    with pytest.raises(TimeoutError, match=f"Living Room didn't answer {action}"):
+        await getattr(session, method)(*args)

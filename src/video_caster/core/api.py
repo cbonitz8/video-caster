@@ -10,7 +10,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from aiohttp import WSCloseCode, web
-from pychromecast.error import RequestTimeout
 
 from video_caster import library as lib
 from video_caster import posters
@@ -55,7 +54,7 @@ async def _error_middleware(request: web.Request, handler):
         return web.json_response({"error": e.reason}, status=e.status)
     except EngineError as e:
         return web.json_response({"error": str(e)}, status=e.status)
-    except (RequestTimeout, TimeoutError) as e:
+    except TimeoutError as e:
         log.warning("Device did not respond on %s %s: %s", request.method, request.path, e)
         return web.json_response({"error": f"Device did not respond: {e}"}, status=504)
     except Exception as e:

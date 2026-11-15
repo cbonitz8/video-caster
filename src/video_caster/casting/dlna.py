@@ -8,9 +8,9 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from async_upnp_client.aiohttp import AiohttpRequester
 from async_upnp_client.client import UpnpService
 from async_upnp_client.client_factory import UpnpFactory
-from async_upnp_client.exceptions import UpnpActionError
+from async_upnp_client.exceptions import UpnpActionError, UpnpError
 
-from video_caster.casting.base import CastSession, Media, PlaybackStatus
+from video_caster.casting.base import CastSession, Media, PlaybackStatus, device_request
 from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
@@ -86,36 +86,42 @@ class DLNASession(CastSession):
         await play.async_call(InstanceID=0, Speed="1")
         log.info("DLNA playback started: %s", media.url)
 
+    def _request(self, action: str):
+        return device_request(self.device, action, timeouts=(TimeoutError,), failures=(UpnpError,))
+
     async def pause(self) -> None:
-        action = self._av_transport.action("Pause")
-        await action.async_call(InstanceID=0)
+        with self._request("pause"):
+            await self._av_transport.action("Pause").async_call(InstanceID=0)
 
     async def resume(self) -> None:
-        action = self._av_transport.action("Play")
-        await action.async_call(InstanceID=0, Speed="1")
+        with self._request("resume"):
+            await self._av_transport.action("Play").async_call(InstanceID=0, Speed="1")
 
     async def stop(self) -> None:
-        try:
-            await self._av_transport.action("Stop").async_call(InstanceID=0)
-        except UpnpActionError as e:
-            if e.error_code != TRANSITION_NOT_AVAILABLE:
-                raise
+        with self._request("stop"):
+            try:
+                await self._av_transport.action("Stop").async_call(InstanceID=0)
+            except UpnpActionError as e:
+                if e.error_code != TRANSITION_NOT_AVAILABLE:
+                    raise
 
     async def seek(self, position: float) -> None:
         h = int(position) // 3600
         m = (int(position) % 3600) // 60
         s = int(position) % 60
         target = f"{h}:{m:02d}:{s:02d}"
-        action = self._av_transport.action("Seek")
-        await action.async_call(InstanceID=0, Unit="REL_TIME", Target=target)
+        with self._request("seek"):
+            await self._av_transport.action("Seek").async_call(InstanceID=0, Unit="REL_TIME", Target=target)
 
     async def set_volume(self, level: float) -> None:
         if not self._rendering_control:
             return
         # CastSession uses 0.0-1.0, DLNA uses 0-100
         volume = int(level * 100)
-        action = self._rendering_control.action("SetVolume")
-        await action.async_call(InstanceID=0, Channel="Master", DesiredVolume=volume)
+        with self._request("change volume"):
+            await self._rendering_control.action("SetVolume").async_call(
+                InstanceID=0, Channel="Master", DesiredVolume=volume
+            )
 
     async def get_status(self) -> PlaybackStatus:
         try:

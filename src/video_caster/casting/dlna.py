@@ -8,6 +8,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from async_upnp_client.aiohttp import AiohttpRequester
 from async_upnp_client.client import UpnpService
 from async_upnp_client.client_factory import UpnpFactory
+from async_upnp_client.exceptions import UpnpActionError
 
 from video_caster.casting.base import CastSession, Media, PlaybackStatus
 from video_caster.discovery.device import Device
@@ -42,6 +43,8 @@ def _didl_metadata(title: str, content_type: str = "video/mp4") -> str:
 
 AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
 RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
+# AVTransport answers Stop with this when the renderer is already stopped.
+TRANSITION_NOT_AVAILABLE = 701
 
 
 async def open_dlna(device: Device) -> DLNASession:
@@ -93,10 +96,10 @@ class DLNASession(CastSession):
 
     async def stop(self) -> None:
         try:
-            action = self._av_transport.action("Stop")
-            await action.async_call(InstanceID=0)
-        except Exception:
-            pass
+            await self._av_transport.action("Stop").async_call(InstanceID=0)
+        except UpnpActionError as e:
+            if e.error_code != TRANSITION_NOT_AVAILABLE:
+                raise
 
     async def seek(self, position: float) -> None:
         h = int(position) // 3600

@@ -41,6 +41,10 @@ class CredentialsRejected(Exception):
     pass
 
 
+class StopFailed(Exception):
+    pass
+
+
 class CastSession(ABC):
     def __init__(self, device: Device) -> None:
         self.device = device

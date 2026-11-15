@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from video_caster import library as lib
-from video_caster.casting.base import PlaybackStatus, RequestPin
+from video_caster.casting.base import PlaybackStatus, RequestPin, StopFailed
 from video_caster.config import Config, save_config
-from video_caster.core.errors import BadRequest, Conflict, NotFound
+from video_caster.core.errors import BadRequest, Conflict, DeviceError, NotFound
 from video_caster.core.events import EventBus
 from video_caster.discovery.device import Device
 from video_caster.discovery.scanner import scan_all
@@ -307,8 +307,12 @@ class Engine:
             self._publish_current()
         await self._cancel_cast()
         await self._release_current("stop")
-        await self._orch.stop_playback()
-        self.events.publish("library_changed", None)
+        try:
+            await self._orch.stop_playback()
+        except StopFailed as e:
+            raise DeviceError(str(e)) from e
+        finally:
+            self.events.publish("library_changed", None)
 
     async def _cancel_cast(self) -> None:
         task = self.cast_task

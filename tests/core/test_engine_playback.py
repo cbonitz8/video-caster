@@ -5,8 +5,8 @@ import asyncio
 import pytest
 from pychromecast.error import RequestTimeout
 
-from video_caster.casting.base import PlaybackStatus
-from video_caster.core.errors import BadRequest
+from video_caster.casting.base import PlaybackStatus, StopFailed
+from video_caster.core.errors import BadRequest, DeviceError
 from tests.conftest import LIVING_ROOM, drain, make_video
 
 
@@ -148,3 +148,26 @@ async def test_failed_replacement_clears_current_and_saves_old_position(
     await engine.cast_task
     assert engine.state()["current"] is None
     assert await history.get_saved_position(str(video)) == 40.0
+
+
+async def test_a_stop_the_device_refused_is_a_device_error_after_saving(
+    engine, orchestrator, history, video
+):
+    await start_casting(engine, video)
+    orchestrator.status = PlaybackStatus(state="playing", current_time=33.0, duration=100.0)
+    orchestrator.command_error = StopFailed("Living Room didn't stop: 701")
+    queue = engine.events.subscribe()
+
+    with pytest.raises(DeviceError, match="Living Room didn't stop"):
+        await engine.stop()
+
+    assert await history.get_saved_position(str(video)) == 33.0
+    assert engine.state()["current"] is None
+    assert "library_changed" in [e["type"] for e in drain(queue)]
+
+
+async def test_a_stop_timeout_stays_a_timeout(engine, orchestrator, video):
+    await start_casting(engine, video)
+    orchestrator.command_error = RequestTimeout("stop", 10.0)
+    with pytest.raises(RequestTimeout):
+        await engine.stop()

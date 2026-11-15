@@ -23,3 +23,7 @@ class NotFound(EngineError):
 
 class Conflict(EngineError):
     status = 409
+
+
+class DeviceError(EngineError):
+    status = 502

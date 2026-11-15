@@ -5,13 +5,20 @@ import subprocess
 
 import pytest
 
-from video_caster.casting.base import CastSession, Media, PairingFailed, PlaybackStatus
+from pychromecast.error import RequestTimeout
+
+from video_caster.casting.base import (
+    CastSession, Media, PairingFailed, PlaybackStatus, StopFailed,
+)
 from video_caster.casting.orchestrator import CastOrchestrator
+from video_caster.casting.stream_plan import Direct, Pipe, Stream
 from video_caster.discovery.device import Device, DeviceType
 
 TV = Device(id="cc-uuid", name="Living Room", device_type=DeviceType.CHROMECAST,
             address="127.0.0.2", port=8009)
 DEN = Device(id="atv-id", name="Den", device_type=DeviceType.APPLETV, address="127.0.0.3")
+BOX = Device(id="uuid:dlna", name="Box", device_type=DeviceType.DLNA, address="127.0.0.4",
+             location="http://127.0.0.4/desc.xml")
 
 
 @pytest.fixture(scope="module")
@@ -162,3 +169,148 @@ async def test_stop_closes_the_session(orch, adapters, clip):
     await orch.cast_file(clip, TV, no_pin)
     await orch.stop()
     assert adapters.log[-1] == ("close", "cc-uuid")
+
+
+class FakeStream(Stream):
+    def __init__(self, plan, log: list) -> None:
+        self.plan = plan
+        self.log = log
+        self.media = Media(url=f"http://fake/{len(log)}", content_type="video/mp4",
+                           title="Show S01E01", duration=1.0)
+
+    async def seek(self, session: CastSession, position: float) -> None:
+        self.log.append(("stream_seek", position))
+        await session.seek(position)
+
+    async def teardown(self) -> None:
+        self.log.append(("teardown", self.plan))
+
+
+class FakeStreams:
+    def __init__(self, log: list) -> None:
+        self.log = log
+        self.opened: list[FakeStream] = []
+
+    async def open(self, plan, path, probed, server, device_ip) -> FakeStream:
+        self.log.append(("open_stream", plan))
+        stream = FakeStream(plan, self.log)
+        self.opened.append(stream)
+        return stream
+
+
+@pytest.fixture
+def streams(adapters) -> FakeStreams:
+    return FakeStreams(adapters.log)
+
+
+@pytest.fixture
+def faked(adapters, streams) -> CastOrchestrator:
+    return CastOrchestrator(open_session=adapters.open, open_stream=streams.open)
+
+
+@pytest.fixture(scope="module")
+def mkv_clip(clip, tmp_path_factory):
+    path = tmp_path_factory.mktemp("mkv") / "Show S01E02.mkv"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(clip),
+                    "-c", "copy", str(path)], check=True)
+    return path
+
+
+async def test_the_plan_comes_from_the_device_type(faked, streams, clip, mkv_clip):
+    await faked.cast_file(clip, BOX, no_pin)
+    await faked.cast_file(mkv_clip, BOX, no_pin)
+    assert [s.plan for s in streams.opened] == [
+        Direct(), Pipe(transcode_video=False, transcode_audio=False),
+    ]
+
+
+async def test_casting_again_tears_down_the_previous_stream_first(faked, adapters, clip):
+    await faked.cast_file(clip, TV, no_pin)
+    await faked.cast_file(clip, TV, no_pin)
+    stream_events = [e[0] for e in adapters.log if e[0] in ("open_stream", "teardown")]
+    assert stream_events == ["open_stream", "teardown", "open_stream"]
+
+
+async def test_seek_goes_through_the_stream(faked, adapters, clip):
+    await faked.cast_file(clip, TV, no_pin)
+    await faked.seek(12.0)
+    assert adapters.log[-2:] == [("stream_seek", 12.0), ("seek", "cc-uuid")]
+
+
+async def test_a_seek_after_stop_does_nothing(faked, adapters, clip):
+    await faked.cast_file(clip, BOX, no_pin)
+    await faked.stop_playback()
+    before = list(adapters.log)
+
+    await faked.seek(30.0)
+
+    assert adapters.log == before
+
+
+async def test_stop_tears_down_even_when_the_device_refuses(faked, adapters, streams, clip):
+    await faked.cast_file(clip, BOX, no_pin)
+    adapters.sessions[0].stop_error = OSError("701 Transition not available")
+
+    with pytest.raises(StopFailed, match="Box didn't stop: 701"):
+        await faked.stop_playback()
+
+    assert adapters.log[-1] == ("teardown", Direct())
+    await faked.seek(5.0)
+    assert ("stream_seek", 5.0) not in adapters.log
+
+
+@pytest.mark.parametrize("timeout", [TimeoutError("slow"), RequestTimeout("stop", 10.0)])
+async def test_a_stop_timeout_is_not_wrapped(faked, adapters, clip, timeout):
+    await faked.cast_file(clip, TV, no_pin)
+    adapters.sessions[0].stop_error = timeout
+    with pytest.raises(type(timeout)):
+        await faked.stop_playback()
+    assert adapters.log[-1][0] == "teardown"
+
+
+async def test_casting_goes_ahead_when_the_previous_stop_fails(faked, adapters, streams, clip):
+    await faked.cast_file(clip, TV, no_pin)
+    adapters.sessions[0].stop_error = OSError("gone")
+    await faked.cast_file(clip, TV, no_pin)
+    assert len(streams.opened) == 2
+    assert len(adapters.sessions[0].played) == 2
+
+
+async def test_shutdown_closes_even_when_the_device_refuses_to_stop(faked, adapters, clip):
+    await faked.start()
+    await faked.cast_file(clip, TV, no_pin)
+    adapters.sessions[0].stop_error = OSError("gone")
+    await faked.stop()
+    assert adapters.log[-1] == ("close", "cc-uuid")
+
+
+async def test_a_pipe_seek_restarts_ffmpeg_and_replays(orch, adapters, mkv_clip):
+    await orch.start()
+    try:
+        await orch.cast_file(mkv_clip, BOX, no_pin)
+        session = adapters.sessions[0]
+        await orch.seek(0.5)
+        first, second = session.played
+        assert "/stream/" in first.url and "/stream/" in second.url
+        assert first.url != second.url
+        assert second.content_type == "video/mp4"
+    finally:
+        await orch.stop()
+
+
+async def test_an_hls_stream_seeks_natively_and_is_removed_on_stop(orch, adapters, mkv_clip):
+    await orch.start()
+    try:
+        await orch.cast_file(mkv_clip, DEN, no_pin)
+        [media] = adapters.sessions[0].played
+        assert media.content_type == "application/vnd.apple.mpegurl"
+        assert media.url.endswith("/playlist.m3u8")
+        assert orch.server._hls
+
+        await orch.seek(0.5)
+        assert adapters.log[-1] == ("seek", "atv-id")
+
+        await orch.stop_playback()
+        assert not orch.server._hls
+    finally:
+        await orch.stop()

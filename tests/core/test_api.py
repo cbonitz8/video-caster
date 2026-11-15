@@ -6,7 +6,7 @@ import pytest
 from aiohttp import ClientSession, WSServerHandshakeError, web
 from pychromecast.error import RequestTimeout
 
-from video_caster.casting.base import PlaybackStatus
+from video_caster.casting.base import PlaybackStatus, StopFailed
 from video_caster.core.api import create_app
 from tests.conftest import LIVING_ROOM, make_video
 
@@ -363,3 +363,16 @@ async def test_poster_refuses_symlink_out_of_folder(client, engine, tmp_path):
 async def test_poster_traversal_with_image_extension(client, engine, tmp_path):
     (tmp_path / "x.jpg").write_bytes(b"outside")
     assert (await client.get("/posters/..%2Fx.jpg")).status == 404
+
+
+async def test_a_refused_stop_is_502(client, orchestrator):
+    orchestrator.command_error = StopFailed("Living Room didn't stop: 701")
+    resp = await client.post("/api/playback/stop")
+    assert resp.status == 502
+    assert (await resp.json())["error"] == "Living Room didn't stop: 701"
+
+
+async def test_a_stop_timeout_is_504(client, orchestrator):
+    orchestrator.command_error = RequestTimeout("stop", 10.0)
+    resp = await client.post("/api/playback/stop")
+    assert resp.status == 504

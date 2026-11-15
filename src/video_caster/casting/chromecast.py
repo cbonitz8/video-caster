@@ -32,12 +32,16 @@ class ChromecastHandler(CastHandler):
     async def connect(self) -> None:
         log.info("Connecting to Chromecast: %s", self.device.name)
         browser = self.device.protocol_config.get("browser")
-        cast = self.device.protocol_config.get("cast")
+        discovered = self.device.protocol_config.get("cast")
 
-        if cast is None:
+        if discovered is None or browser is None:
             raise RuntimeError(f"No cast object for {self.device.name}")
 
-        self._cast = cast
+        # A disconnected Chromecast's socket thread cannot be restarted, so each
+        # connection gets its own object rather than reusing the discovered one.
+        self._cast = pychromecast.get_chromecast_from_cast_info(
+            discovered.cast_info, browser.zc
+        )
         await self._run_sync(self._cast.wait)
         log.info("Connected to Chromecast: %s", self.device.name)
 

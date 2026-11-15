@@ -147,6 +147,23 @@ async def test_stop_forgets_a_waiting_file(engine, video):
     assert engine.state()["pending"] is None
 
 
+async def test_a_pending_cast_exists_only_while_no_device_has_ever_played(engine, orchestrator, video):
+    await engine.scan_devices()
+    engine.request_cast(video, resume=False)
+    assert engine.state()["pending"] is not None
+    assert not [c for c in orchestrator.calls if c[0] == "cast_file"]
+
+    await engine.stop()
+
+    assert engine.state()["current"] is None
+    assert not [c for c in orchestrator.calls if c[0] == "cast_file"]
+
+
+async def test_once_a_device_is_selected_a_cast_is_never_left_pending(engine, video):
+    await start_casting(engine, video)
+    assert engine.request_cast(video, resume=False)["status"] == "casting"
+    assert engine.state()["pending"] is None
+
 
 async def test_failed_replacement_clears_current_and_saves_old_position(
         engine, orchestrator, history, watch_dir, video):

@@ -78,6 +78,12 @@ def test_update_settings_persists(engine, saved_configs, tmp_path):
     assert drain(queue) == [{"type": "library_changed", "data": None}]
 
 
+@pytest.mark.parametrize("folder", ['/Volumes/stanley/Bob\'s "Best"', "/tmp/a\\b", "/tmp/a\tb"])
+def test_update_settings_accepts_any_absolute_path(engine, saved_configs, folder):
+    engine.update_settings({"watch_folders": [folder]})
+    assert [str(p) for p in saved_configs[-1].watch_folders] == [folder]
+
+
 @pytest.mark.parametrize("changes", [
     {"color": "red"},
     {"watch_folders": "~/Movies"},
@@ -86,9 +92,7 @@ def test_update_settings_persists(engine, saved_configs, tmp_path):
     {"recently_added_limit": 0},
     {"recently_added_limit": True},
     {"recently_added_days": 7},
-    {"watch_folders": ['/Volumes/stanley/Bob\'s "Best"']},
-    {"watch_folders": ["/tmp/a\\b"]},
-    {"watch_folders": ["/tmp/a\nb"]},
+    {"watch_folders": ["/tmp/a\0b"]},
 ])
 def test_update_settings_rejects_bad_input(engine, saved_configs, changes):
     with pytest.raises(BadRequest):

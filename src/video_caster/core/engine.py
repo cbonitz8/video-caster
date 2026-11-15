@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,9 +32,6 @@ LOCAL_NETWORK_BLOCKED = (
     "found. System Settings > Privacy & Security > Local Network: enable Python. If it "
     "is already on, toggle it off and on, then restart the service."
 )
-
-_UNSAFE_PATH_CHARS = re.compile(r'["\\\x00-\x1f\x7f]')
-
 
 class Orchestrator(Protocol):
     async def start(self) -> None: ...
@@ -444,9 +440,8 @@ class Engine:
             folders = changes["watch_folders"]
             if not isinstance(folders, list) or not all(isinstance(p, str) and p for p in folders):
                 raise BadRequest("watch_folders must be a list of absolute paths")
-            # config.toml stores these as plain TOML strings, so these characters would corrupt it.
-            if any(_UNSAFE_PATH_CHARS.search(p) for p in folders):
-                raise BadRequest("watch_folders paths can't contain quotes, backslashes or control characters")
+            if any("\0" in p for p in folders):
+                raise BadRequest("watch_folders paths can't contain NUL characters")
             paths = [Path(p).expanduser() for p in folders]
             if not all(p.is_absolute() for p in paths):
                 raise BadRequest("watch_folders must be a list of absolute paths")

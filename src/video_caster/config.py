@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import tomli_w
 from platformdirs import user_config_dir
 
 if sys.version_info >= (3, 11):
@@ -30,17 +33,18 @@ class Config:
     history_db_path: Path = field(default_factory=lambda: CONFIG_DIR / "history.db")
 
 
-def load_config() -> Config:
+def load_config(path: Path = CONFIG_PATH) -> Config:
     """Load config from TOML file, falling back to defaults."""
-    if not CONFIG_PATH.exists():
+    if not path.exists():
         return Config()
 
-    with open(CONFIG_PATH, "rb") as f:
+    with open(path, "rb") as f:
         data = tomllib.load(f)
 
-    watch_folders = [
-        Path(p).expanduser() for p in data.get("watch_folders", [])
-    ] or list(DEFAULT_WATCH_FOLDERS)
+    if "watch_folders" in data:
+        watch_folders = [Path(p).expanduser() for p in data["watch_folders"]]
+    else:
+        watch_folders = list(DEFAULT_WATCH_FOLDERS)
 
     return Config(
         watch_folders=watch_folders,
@@ -49,21 +53,22 @@ def load_config() -> Config:
     )
 
 
-def save_config(config: Config) -> None:
-    """Write config to TOML file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f'# Video Caster configuration\n',
-        f'recently_added_limit = {config.recently_added_limit}\n',
-        f'history_db_path = "{config.history_db_path}"\n',
-        f'\n',
-    ]
-    # Write watch folders as a TOML array
-    folder_entries = ", ".join(f'"{p}"' for p in config.watch_folders)
-    lines.append(f'watch_folders = [{folder_entries}]\n')
-
-    with open(CONFIG_PATH, "w") as f:
-        f.writelines(lines)
+def save_config(config: Config, path: Path = CONFIG_PATH) -> None:
+    """Write config to TOML file, replacing the old file only once the new one is whole."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = tomli_w.dumps({
+        "recently_added_limit": config.recently_added_limit,
+        "history_db_path": str(config.history_db_path),
+        "watch_folders": [str(p) for p in config.watch_folders],
+    })
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config-", suffix=".toml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
 
 
 def ensure_default_config() -> Config:

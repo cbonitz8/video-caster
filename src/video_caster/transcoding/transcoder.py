@@ -16,10 +16,6 @@ class Transcoder:
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
 
-    @property
-    def is_running(self) -> bool:
-        return self._process is not None and self._process.returncode is None
-
     async def start(
         self,
         input_path: Path,

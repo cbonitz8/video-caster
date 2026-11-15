@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import platform
 import re
 import shutil
@@ -17,13 +16,6 @@ HLS_SEGMENT_DURATION = 6.0
 SEGMENT_NAME_RE = re.compile(r"^seg-(\d{5})\.ts$")
 
 
-def segments_for_duration(duration: float) -> int:
-    """Number of segments needed to cover the given duration."""
-    if duration <= 0:
-        return 0
-    return max(1, math.ceil(duration / HLS_SEGMENT_DURATION))
-
-
 class HLSTranscoder:
     """FFmpeg-managed HLS output. One temp dir per cast session."""
 
@@ -32,10 +24,6 @@ class HLSTranscoder:
         self._tmpdir: Path | None = None
         self._start_segment: int = 0
         self._stderr_task: asyncio.Task | None = None
-
-    @property
-    def is_running(self) -> bool:
-        return self._process is not None and self._process.returncode is None
 
     @property
     def output_dir(self) -> Path | None:

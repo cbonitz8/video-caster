@@ -26,12 +26,6 @@ VIDEO_EXTENSIONS = {
     ".3gp", ".mpg", ".mpeg",
 }
 
-# Target transcode settings
-TRANSCODE_VIDEO_CODEC = "libx264"
-TRANSCODE_AUDIO_CODEC = "aac"
-TRANSCODE_CONTAINER = "mp4"
-
-
 def needs_transcode(
     video_codec: str,
     audio_codec: str,

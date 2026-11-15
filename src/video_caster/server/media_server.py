@@ -13,7 +13,7 @@ from typing import AsyncIterator, Awaitable, Callable
 
 from aiohttp import web
 
-from video_caster.transcoding.hls import HLS_SEGMENT_DURATION, segments_for_duration
+from video_caster.transcoding.hls import HLS_SEGMENT_DURATION
 from video_caster.utils.network import get_local_ip, get_local_ip_for
 
 log = logging.getLogger(__name__)

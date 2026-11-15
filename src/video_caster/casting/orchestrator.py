@@ -309,14 +309,6 @@ class CastOrchestrator:
             self.server.unregister_hls(self._current_stream_id)
             self._current_stream_id = None
 
-    async def pause(self) -> None:
-        if self._handler:
-            await self._handler.pause()
-
-    async def resume(self) -> None:
-        if self._handler:
-            await self._handler.resume()
-
     async def toggle_pause(self) -> None:
         if self._handler:
             status = await self._handler.get_status()
@@ -365,11 +357,3 @@ class CastOrchestrator:
         if self._handler:
             return await self._handler.get_status()
         return PlaybackStatus()
-
-    async def disconnect(self) -> None:
-        await self.stop_playback()
-        if self._handler:
-            await self._handler.disconnect()
-            self._handler = None
-            self._current_device = None
-        self._current_cast = None

@@ -4,39 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import mimetypes
 import os
-from dataclasses import dataclass, field
+import re
 from pathlib import Path
-from typing import AsyncIterator, Awaitable, Callable
+from typing import AsyncIterator, Protocol
 
 from aiohttp import web
 
-from video_caster.transcoding.hls import HLS_SEGMENT_DURATION
 from video_caster.utils.network import get_local_ip, get_local_ip_for
 
 log = logging.getLogger(__name__)
 
-
-# Async callback: (stream_id, segment_index) -> None.
-# Orchestrator implements this to restart ffmpeg at a new offset when the
-# receiver requests a segment too far ahead of the current encode position.
-EnsureSegmentCallback = Callable[[str, int], Awaitable[None]]
+SEGMENT_PATH_RE = re.compile(r"^seg-(\d{5})\.ts$")
 
 
-@dataclass
-class HLSSession:
-    output_dir: Path
-    duration: float
-    segment_duration: float = HLS_SEGMENT_DURATION
-    # Per-segment durations when video is `-c:v copy` and segments align to
-    # source keyframes (irregular). When set, the synthesized playlist uses
-    # these EXTINF values directly. None → uniform-cadence synthesis.
-    segments: list[float] | None = None
-    ensure_segment: EnsureSegmentCallback | None = None
-    # Lock to prevent multiple concurrent restarts for the same session.
-    _restart_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+class HlsSource(Protocol):
+    def playlist(self) -> str: ...
+
+    async def segment(self, index: int) -> Path | None: ...
 
 
 class MediaServer:
@@ -59,7 +45,7 @@ class MediaServer:
         self._site: web.TCPSite | None = None
         self._files: dict[str, Path] = {}
         self._streams: dict[str, AsyncIterator[bytes]] = {}
-        self._hls: dict[str, HLSSession] = {}
+        self._hls: dict[str, HlsSource] = {}
         self._port = 0
 
     @property
@@ -100,23 +86,8 @@ class MediaServer:
     def unregister_stream(self, stream_id: str) -> None:
         self._streams.pop(stream_id, None)
 
-    def register_hls(
-        self,
-        stream_id: str,
-        output_dir: Path,
-        duration: float,
-        ensure_segment: EnsureSegmentCallback | None,
-        segment_duration: float = HLS_SEGMENT_DURATION,
-        segments: list[float] | None = None,
-        device_ip: str = "",
-    ) -> str:
-        self._hls[stream_id] = HLSSession(
-            output_dir=output_dir,
-            duration=duration,
-            segment_duration=segment_duration,
-            segments=segments,
-            ensure_segment=ensure_segment,
-        )
+    def register_hls(self, stream_id: str, source: HlsSource, device_ip: str = "") -> str:
+        self._hls[stream_id] = source
         base = self.base_url_for(device_ip) if device_ip else self.base_url
         return f"{base}/hls/{stream_id}/playlist.m3u8"
 
@@ -217,99 +188,24 @@ class MediaServer:
         return web.Response(status=204)
 
     async def _handle_hls_playlist(self, request: web.Request) -> web.Response:
-        stream_id = request.match_info["stream_id"]
-        session = self._hls.get(stream_id)
-        if session is None:
+        source = self._hls.get(request.match_info["stream_id"])
+        if source is None:
             raise web.HTTPNotFound()
-
-        if session.segments:
-            extinfs = session.segments
-            target_dur = max(extinfs) if extinfs else HLS_SEGMENT_DURATION
-        else:
-            seg_dur = (
-                session.segment_duration
-                if session.segment_duration > 0
-                else HLS_SEGMENT_DURATION
-            )
-            if session.duration <= 0:
-                extinfs = []
-                target_dur = seg_dur
-            else:
-                full_seg_count = int(session.duration // seg_dur)
-                remainder = session.duration - full_seg_count * seg_dur
-                extinfs = [seg_dur] * full_seg_count
-                if remainder > 0:
-                    extinfs.append(remainder)
-                target_dur = seg_dur
-
-        lines = [
-            "#EXTM3U",
-            "#EXT-X-VERSION:3",
-            f"#EXT-X-TARGETDURATION:{int(math.ceil(target_dur))}",
-            "#EXT-X-MEDIA-SEQUENCE:0",
-            "#EXT-X-PLAYLIST-TYPE:VOD",
-            "#EXT-X-INDEPENDENT-SEGMENTS",
-        ]
-        for i, extinf in enumerate(extinfs):
-            lines.append(f"#EXTINF:{extinf:.6f},")
-            lines.append(f"seg-{i:05d}.ts")
-        lines.append("#EXT-X-ENDLIST")
-        body = "\n".join(lines) + "\n"
         return web.Response(
-            body=body.encode("utf-8"),
+            body=source.playlist().encode("utf-8"),
             content_type="application/vnd.apple.mpegurl",
         )
 
     async def _handle_hls_segment(self, request: web.Request) -> web.StreamResponse:
-        stream_id = request.match_info["stream_id"]
-        seg_name = request.match_info["segment"]
-        session = self._hls.get(stream_id)
-        if session is None:
+        source = self._hls.get(request.match_info["stream_id"])
+        match = SEGMENT_PATH_RE.match(request.match_info["segment"])
+        if source is None or match is None:
             raise web.HTTPNotFound()
-
-        # Parse seg-NNNNN.ts
-        if not seg_name.startswith("seg-") or not seg_name.endswith(".ts"):
+        path = await source.segment(int(match.group(1)))
+        if path is None:
+            log.warning("HLS segment %s not available", request.match_info["segment"])
             raise web.HTTPNotFound()
-        try:
-            seg_index = int(seg_name[4:-3])
-        except ValueError:
-            raise web.HTTPNotFound()
-
-        seg_path = session.output_dir / seg_name
-
-        # If the segment isn't present yet, give ffmpeg a brief grace period
-        # before deciding it's a far-seek that needs an ffmpeg restart.
-        await self._wait_for_segment(seg_path, timeout=2.0)
-
-        if not seg_path.exists() and session.ensure_segment is not None:
-            log.info(
-                "HLS seg %d not yet encoded — asking orchestrator to restart at offset",
-                seg_index,
-            )
-            async with session._restart_lock:
-                # Double-check inside lock — another request may have already triggered restart.
-                if not seg_path.exists():
-                    try:
-                        await session.ensure_segment(stream_id, seg_index)
-                    except Exception:
-                        log.exception("ensure_segment failed for %d", seg_index)
-            # Wait again now that ffmpeg should be encoding from the new offset.
-            await self._wait_for_segment(seg_path, timeout=30.0)
-
-        if not seg_path.exists():
-            log.warning("HLS segment %s never appeared", seg_path)
-            raise web.HTTPNotFound()
-
-        # Serve the file. Range support not needed — segments are small.
-        return web.FileResponse(seg_path, headers={"Content-Type": "video/mp2t"})
-
-    async def _wait_for_segment(self, path: Path, timeout: float) -> None:
-        elapsed = 0.0
-        while elapsed < timeout:
-            if path.exists() and path.stat().st_size > 0:
-                return
-            await asyncio.sleep(0.1)
-            elapsed += 0.1
+        return web.FileResponse(path, headers={"Content-Type": "video/mp2t"})
 
     async def _handle_stream(self, request: web.Request) -> web.StreamResponse:
         stream_id = request.match_info["stream_id"]

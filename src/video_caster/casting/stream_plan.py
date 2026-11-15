@@ -12,20 +12,11 @@ from typing import Awaitable, Callable, Union
 from video_caster.casting.base import CastSession, Media
 from video_caster.discovery.device import DeviceType
 from video_caster.server.media_server import MediaServer
-from video_caster.transcoding.hls import HLS_SEGMENT_DURATION, HLSTranscoder
-from video_caster.transcoding.probe import (
-    ProbeResult,
-    group_keyframes_into_segments,
-    probe_keyframes,
-)
+from video_caster.transcoding.hls import HlsSession
+from video_caster.transcoding.probe import ProbeResult
 from video_caster.transcoding.transcoder import Transcoder
 
 log = logging.getLogger(__name__)
-
-# How far ahead of the current encode position the receiver may request before
-# we restart ffmpeg at that offset (otherwise we'd wait forever for the encode
-# to catch up on a far-forward seek).
-HLS_FAR_SEEK_THRESHOLD = 5  # segments
 
 MP4 = "video/mp4"
 M3U8 = "application/vnd.apple.mpegurl"
@@ -198,90 +189,26 @@ class PipeStream(Stream):
 
 
 class HlsStream(Stream):
-    def __init__(self, plan: Hls, path: Path, server: MediaServer) -> None:
-        self._plan = plan
-        self._path = path
+    def __init__(self, hls: HlsSession, server: MediaServer, stream_id: str, media: Media) -> None:
+        self._hls = hls
         self._server = server
-        self._hls = HLSTranscoder()
-        self._stream_id = str(uuid.uuid4())
-        self._copy_video = not plan.transcode_video
-        self._segment_starts: list[float] = []
-        self._torn_down = False
+        self._stream_id = stream_id
+        self.media = media
 
     @classmethod
     async def open(cls, plan: Hls, path: Path, probed: ProbeResult,
                    server: MediaServer, device_ip: str) -> HlsStream:
-        stream = cls(plan, path, server)
-        await stream._start(probed.duration, device_ip)
-        return stream
-
-    async def _start(self, duration: float, device_ip: str) -> None:
-        # When copying, segment boundaries come from the source's keyframes:
-        # that's where `-c:v copy -hls_time` lands, and the synthesized
-        # playlist must match exactly to keep playback in sync.
-        segment_durations: list[float] | None = None
-        if self._copy_video:
-            keyframes = await probe_keyframes(self._path)
-            grouped = group_keyframes_into_segments(keyframes, duration, HLS_SEGMENT_DURATION)
-            if grouped:
-                self._segment_starts = [s for s, _ in grouped]
-                segment_durations = [d for _, d in grouped]
-            else:
-                log.warning(
-                    "Keyframe probe returned nothing for %s; falling back to re-encode",
-                    self._path.name,
-                )
-                self._copy_video = False
-
-        await self._hls.start(
-            self._path,
-            copy_video=self._copy_video,
-            transcode_audio=self._plan.transcode_audio,
-            seek_to=0.0,
-            start_segment=0,
-        )
-        assert self._hls.output_dir is not None
-        url = self._server.register_hls(
-            self._stream_id,
-            self._hls.output_dir,
-            duration,
-            ensure_segment=self._ensure_segment,
-            segment_duration=self._hls.real_segment_duration(),
-            segments=segment_durations,
-            device_ip=device_ip,
-        )
-        log.info("Serving HLS at %s (copy_video=%s)", url, self._copy_video)
-        self.media = Media(url=url, content_type=M3U8, title=self._path.stem, duration=duration)
-
-    async def _ensure_segment(self, stream_id: str, segment_index: int) -> None:
-        """Restart ffmpeg at segment_index when the receiver seeks far ahead."""
-        if self._torn_down:
-            return
-        current = self._hls.current_segment_index()
-        # ffmpeg only encodes forward from start_segment: a missing segment
-        # behind it never arrives, so only wait when it's just ahead.
-        if self._hls.start_segment <= segment_index <= current + HLS_FAR_SEEK_THRESHOLD:
-            return
-
-        # Re-encode forces keyframes at nominal segment boundaries; copy mode
-        # needs the real keyframe-aligned offset.
-        if self._copy_video and segment_index < len(self._segment_starts):
-            seek_to = self._segment_starts[segment_index]
-        else:
-            seek_to = segment_index * HLS_SEGMENT_DURATION
-        log.info("HLS far seek to seg %d (%.1fs); restarting ffmpeg", segment_index, seek_to)
-        await self._hls.start(
-            self._path,
-            copy_video=self._copy_video,
-            transcode_audio=self._plan.transcode_audio,
-            seek_to=seek_to,
-            start_segment=segment_index,
-        )
+        hls = await HlsSession.open(path, probed, copy_video=not plan.transcode_video,
+                                    transcode_audio=plan.transcode_audio)
+        stream_id = str(uuid.uuid4())
+        url = server.register_hls(stream_id, hls, device_ip)
+        log.info("Serving HLS at %s (copy_video=%s)", url, hls.copy_video)
+        return cls(hls, server, stream_id,
+                   Media(url=url, content_type=M3U8, title=path.stem, duration=probed.duration))
 
     async def seek(self, session: CastSession, position: float) -> None:
         await session.seek(position)
 
     async def teardown(self) -> None:
-        self._torn_down = True
         self._server.unregister_hls(self._stream_id)
-        await self._hls.cleanup()
+        await self._hls.close()

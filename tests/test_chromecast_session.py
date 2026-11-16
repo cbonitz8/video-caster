@@ -128,3 +128,29 @@ async def test_a_request_timeout_is_a_plain_timeout(method, args, action):
     session = ChromecastSession(LIVING_ROOM, RefusingCast(RequestTimeout("pause", 10.0)))
     with pytest.raises(TimeoutError, match=f"Living Room didn't answer {action}"):
         await getattr(session, method)(*args)
+
+
+class SilentCast:
+    def __init__(self) -> None:
+        self.waited_for: float | None = None
+        self.disconnect_timeout: float | None = None
+
+    def wait(self, timeout=None) -> None:
+        self.waited_for = timeout
+        raise RequestTimeout("wait", timeout)
+
+    def disconnect(self, timeout=None) -> None:
+        self.disconnect_timeout = timeout
+
+
+async def test_a_chromecast_that_never_answers_times_out_and_stops_retrying(monkeypatch):
+    silent = SilentCast()
+    monkeypatch.setattr(
+        "video_caster.casting.chromecast.pychromecast.get_chromecast_from_host", lambda host: silent
+    )
+
+    with pytest.raises(TimeoutError, match="Living Room didn't answer within 10s"):
+        await open_chromecast(LIVING_ROOM)
+
+    assert silent.waited_for == 10.0
+    assert silent.disconnect_timeout == 0

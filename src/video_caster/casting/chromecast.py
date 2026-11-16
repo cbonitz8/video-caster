@@ -18,6 +18,8 @@ log = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chromecast")
 
+CONNECT_TIMEOUT = 10.0
+
 
 async def _run_sync(fn, *args):
     return await asyncio.get_running_loop().run_in_executor(_executor, fn, *args)
@@ -30,7 +32,12 @@ async def open_chromecast(device: Device) -> ChromecastSession:
     cast = pychromecast.get_chromecast_from_host(
         (device.address, device.port, UUID(device.id), device.model, device.name)
     )
-    await _run_sync(cast.wait)
+    try:
+        await _run_sync(cast.wait, CONNECT_TIMEOUT)
+    except RequestTimeout as e:
+        # The socket thread retries forever; stop it without waiting for it to exit.
+        cast.disconnect(timeout=0)
+        raise TimeoutError(f"{device.name} didn't answer within {CONNECT_TIMEOUT:g}s") from e
     log.info("Connected to Chromecast: %s", device.name)
     return ChromecastSession(device, cast)
 

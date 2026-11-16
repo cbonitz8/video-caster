@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from typing import Awaitable, Callable
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 import aiohttp
 import pychromecast
 import pyatv
+import zeroconf
 from async_upnp_client.search import async_search
 
 from video_caster.discovery.device import Device, DeviceType
@@ -28,18 +30,23 @@ async def scan_chromecasts(timeout: float = 5.0) -> list[Device]:
     loop = asyncio.get_running_loop()
 
     def _scan() -> list[Device]:
-        chromecasts, browser = pychromecast.get_chromecasts(timeout=timeout)
-        browser.stop_discovery()
+        browser = pychromecast.CastBrowser(pychromecast.SimpleCastListener(), zeroconf.Zeroconf())
+        browser.start_discovery()
+        try:
+            time.sleep(timeout)
+            infos = list(browser.devices.values())
+        finally:
+            browser.stop_discovery()
         return [
             Device(
-                id=str(cc.cast_info.uuid),
-                name=cc.cast_info.friendly_name,
+                id=str(info.uuid),
+                name=info.friendly_name,
                 device_type=DeviceType.CHROMECAST,
-                address=str(cc.cast_info.host),
-                port=cc.cast_info.port,
-                model=cc.cast_info.model_name or "",
+                address=str(info.host),
+                port=info.port,
+                model=info.model_name or "",
             )
-            for cc in chromecasts
+            for info in infos
         ]
 
     try:

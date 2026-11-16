@@ -329,14 +329,14 @@ class Engine:
     async def seek(self, position: float | None = None, offset: float | None = None) -> None:
         if (position is None) == (offset is None):
             raise BadRequest("Give exactly one of position or offset")
-        if offset is not None:
-            status = await self._orch.get_status()
-            target = max(0.0, status.current_time + offset)
-            if status.duration > 0:
-                target = min(target, status.duration)
-        else:
-            target = max(0.0, position)
         with _device_request():
+            if offset is not None:
+                status = await self._orch.get_status()
+                target = max(0.0, status.current_time + offset)
+                if status.duration > 0:
+                    target = min(target, status.duration)
+            else:
+                target = max(0.0, position)
             await self._orch.seek(target)
 
     def next_episode(self) -> Path:

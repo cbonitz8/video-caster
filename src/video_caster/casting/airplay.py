@@ -14,6 +14,7 @@ from pyatv.exceptions import (
     BlockedStateError,
     CommandError,
     ConnectionLostError,
+    NotSupportedError,
     OperationTimeoutError,
     PairingError,
     PlaybackError,
@@ -170,14 +171,18 @@ class AirPlaySession(CastSession):
                 await self._atv.audio.set_volume(level * 100)
 
     async def get_status(self) -> PlaybackStatus:
-        try:
+        with self._request("report status"):
             playing = await self._atv.metadata.playing()
-            return PlaybackStatus(
-                state=_STATE_MAP.get(playing.device_state, "idle"),
-                current_time=playing.position or 0.0,
-                duration=playing.total_time or 0.0,
-                volume=self._atv.audio.volume / 100 if self._atv.audio else 1.0,
-                title=playing.title or "",
-            )
-        except Exception:
-            return PlaybackStatus()
+        return PlaybackStatus(
+            state=_STATE_MAP.get(playing.device_state, "idle"),
+            current_time=playing.position or 0.0,
+            duration=playing.total_time or 0.0,
+            volume=self._volume(),
+            title=playing.title or "",
+        )
+
+    def _volume(self) -> float:
+        try:
+            return self._atv.audio.volume / 100
+        except NotSupportedError:
+            return 1.0

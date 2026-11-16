@@ -4,13 +4,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from pyatv.const import PairingRequirement, Protocol
+from pyatv.const import DeviceState, PairingRequirement, Protocol
 from pyatv.exceptions import (
     AuthenticationError,
     BlockedStateError,
     CommandError,
     ConnectionLostError,
     HttpError,
+    NotSupportedError,
     OperationTimeoutError,
     PairingError,
     PlaybackError,
@@ -231,6 +232,7 @@ class RefusingAppleTV:
             pause=self._refuse, play=self._refuse, stop=self._refuse, set_position=self._refuse,
         )
         self.audio = SimpleNamespace(set_volume=self._refuse)
+        self.metadata = SimpleNamespace(playing=self._refuse)
 
     async def _refuse(self, *args) -> None:
         raise self.error
@@ -242,6 +244,7 @@ CONTROLS = [
     ("stop", (), "stop"),
     ("seek", (12.0,), "seek"),
     ("set_volume", (0.5,), "change volume"),
+    ("get_status", (), "report status"),
 ]
 
 
@@ -270,3 +273,27 @@ async def test_an_unexpected_error_is_not_dressed_up_as_a_device_failure(creds):
     session = AirPlaySession(DEN, RefusingAppleTV(KeyError("bug")), creds)
     with pytest.raises(KeyError):
         await session.pause()
+
+
+class PlayingAppleTV:
+    def __init__(self) -> None:
+        playing = SimpleNamespace(device_state=DeviceState.Playing, position=65,
+                                  total_time=1200, title="Pilot")
+        self.metadata = SimpleNamespace(playing=lambda: _reply(playing))
+        self.audio = UnsupportedAudio()
+
+
+class UnsupportedAudio:
+    @property
+    def volume(self) -> float:
+        raise NotSupportedError()
+
+
+async def _reply(value):
+    return value
+
+
+async def test_an_apple_tv_without_volume_still_reports_status(creds):
+    status = await AirPlaySession(DEN, PlayingAppleTV(), creds).get_status()
+    assert (status.state, status.current_time, status.duration, status.volume) == (
+        "playing", 65, 1200, 1.0)

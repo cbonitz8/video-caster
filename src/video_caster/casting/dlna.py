@@ -124,39 +124,31 @@ class DLNASession(CastSession):
             )
 
     async def get_status(self) -> PlaybackStatus:
-        try:
-            pos_action = self._av_transport.action("GetPositionInfo")
-            pos_info = await pos_action.async_call(InstanceID=0)
-
-            current_time = _parse_time(pos_info.get("RelTime", "0:00:00"))
-            duration = _parse_time(pos_info.get("TrackDuration", "0:00:00"))
-
-            transport_action = self._av_transport.action("GetTransportInfo")
-            transport_info = await transport_action.async_call(InstanceID=0)
-            transport_state = transport_info.get("CurrentTransportState", "STOPPED")
-            state = _STATE_MAP.get(transport_state, "idle")
-
-            volume = 1.0
-            if self._rendering_control:
-                try:
-                    vol_action = self._rendering_control.action("GetVolume")
-                    vol_info = await vol_action.async_call(
-                        InstanceID=0, Channel="Master"
-                    )
-                    volume = int(vol_info.get("CurrentVolume", 100)) / 100.0
-                except Exception:
-                    pass
-
-            return PlaybackStatus(
-                state=state,
-                current_time=current_time,
-                duration=duration,
-                volume=volume,
-                title=self._title,
+        with self._request("report status"):
+            pos_info = await self._av_transport.action("GetPositionInfo").async_call(InstanceID=0)
+            transport_info = await self._av_transport.action("GetTransportInfo").async_call(
+                InstanceID=0
             )
-        except Exception as e:
-            log.debug("DLNA get_status failed: %s", e)
-            return PlaybackStatus()
+            volume = await self._volume()
+        transport_state = transport_info.get("CurrentTransportState", "STOPPED")
+        return PlaybackStatus(
+            state=_STATE_MAP.get(transport_state, "idle"),
+            current_time=_parse_time(pos_info.get("RelTime", "0:00:00")),
+            duration=_parse_time(pos_info.get("TrackDuration", "0:00:00")),
+            volume=volume,
+            title=self._title,
+        )
+
+    async def _volume(self) -> float:
+        if self._rendering_control is None or not self._rendering_control.has_action("GetVolume"):
+            return 1.0
+        try:
+            vol_info = await self._rendering_control.action("GetVolume").async_call(
+                InstanceID=0, Channel="Master"
+            )
+        except UpnpActionError:
+            return 1.0
+        return int(vol_info.get("CurrentVolume", 100)) / 100.0
 
 
 def _parse_time(time_str: str) -> float:

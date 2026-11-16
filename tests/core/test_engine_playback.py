@@ -128,6 +128,12 @@ async def test_a_request_the_device_refused_is_a_device_error(engine, orchestrat
         await command(engine)
 
 
+
+async def test_a_relative_seek_the_device_cannot_report_for_is_a_device_error(engine, orchestrator):
+    orchestrator.status_error = DeviceRequestFailed("Living Room didn't report status: gone")
+    with pytest.raises(DeviceError, match="Living Room didn't report status"):
+        await engine.seek(offset=30.0)
+
 async def test_stop_cancels_a_cast_still_loading(engine, orchestrator, video):
     orchestrator.cast_gate = asyncio.Event()
     await engine.scan_devices()

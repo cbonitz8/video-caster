@@ -178,7 +178,6 @@ class AirPlaySession(CastSession):
             current_time=playing.position or 0.0,
             duration=playing.total_time or 0.0,
             volume=self._volume(),
-            title=playing.title or "",
         )
 
     def _volume(self) -> float:

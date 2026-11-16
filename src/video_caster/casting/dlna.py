@@ -15,7 +15,6 @@ from video_caster.discovery.device import Device
 
 log = logging.getLogger(__name__)
 
-# DLNA transport state → our state
 _STATE_MAP = {
     "PLAYING": "playing",
     "PAUSED_PLAYBACK": "paused",
@@ -69,13 +68,11 @@ class DLNASession(CastSession):
         super().__init__(device)
         self._av_transport = av_transport
         self._rendering_control = rendering_control
-        self._title = ""
 
     async def close(self) -> None:
         pass
 
     async def play(self, media: Media) -> None:
-        self._title = media.title
         set_uri = self._av_transport.action("SetAVTransportURI")
         await set_uri.async_call(
             InstanceID=0,
@@ -116,7 +113,6 @@ class DLNASession(CastSession):
     async def set_volume(self, level: float) -> None:
         if not self._rendering_control:
             return
-        # CastSession uses 0.0-1.0, DLNA uses 0-100
         volume = int(level * 100)
         with self._request("change volume"):
             await self._rendering_control.action("SetVolume").async_call(
@@ -136,7 +132,6 @@ class DLNASession(CastSession):
             current_time=_parse_time(pos_info.get("RelTime", "0:00:00")),
             duration=_parse_time(pos_info.get("TrackDuration", "0:00:00")),
             volume=volume,
-            title=self._title,
         )
 
     async def _volume(self) -> float:

@@ -46,16 +46,12 @@ class Orchestrator(Protocol):
     async def get_status(self) -> PlaybackStatus: ...
 
 
-def status_dict(status: PlaybackStatus, current_path: Path | None) -> dict:
-    title = status.title
-    if not title and current_path is not None:
-        title = display_title(current_path)["title"]
+def status_dict(status: PlaybackStatus) -> dict:
     return {
         "state": status.state,
         "current_time": status.current_time,
         "duration": status.duration,
         "volume": status.volume,
-        "title": title,
     }
 
 
@@ -123,7 +119,7 @@ class Engine:
         self._pending: tuple[Path, bool] | None = None
         self._pin_request: dict | None = None
         self._pin_future: asyncio.Future | None = None
-        self._last_status = status_dict(PlaybackStatus(), None)
+        self._last_status = status_dict(PlaybackStatus())
         self._last_tick_error: str | None = None
 
     # -- State --
@@ -296,7 +292,7 @@ class Engine:
     async def tick(self) -> None:
         try:
             status = await self._orch.get_status()
-            payload = status_dict(status, self._current_path)
+            payload = status_dict(status)
             if payload != self._last_status or status.state == "playing":
                 self._last_status = payload
                 self.events.publish("status", payload)

@@ -23,7 +23,7 @@ async def test_tick_publishes_status_with_title_fallback(engine, orchestrator, v
     await engine.tick()
     assert drain(queue)[0] == {"type": "status", "data": {
         "state": "playing", "current_time": 10.0, "duration": 100.0,
-        "volume": 1.0, "title": "Movie"}}
+        "volume": 1.0}}
 
 
 async def test_tick_skips_unchanged_paused_status(engine, orchestrator):

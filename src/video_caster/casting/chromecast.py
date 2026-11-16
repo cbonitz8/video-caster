@@ -89,7 +89,6 @@ class ChromecastSession(CastSession):
                 current_time=ms.adjusted_current_time or ms.current_time or 0.0,
                 duration=ms.duration or 0.0,
                 volume=self._cast.status.volume_level if self._cast.status else 1.0,
-                title=ms.title or "",
             )
 
         return await _run_sync(_get)

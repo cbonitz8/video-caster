@@ -15,7 +15,6 @@ class PlaybackStatus:
     current_time: float = 0.0
     duration: float = 0.0
     volume: float = 1.0
-    title: str = ""
 
     @property
     def progress(self) -> float:

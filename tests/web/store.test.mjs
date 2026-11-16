@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { initialState, nowPlaying, reduce } from "../../src/video_caster/core/static/store.js";
 
 const snapshot = (overrides = {}) => ({
-  status: { state: "idle", current_time: 0, duration: 0, volume: 1, title: "" },
+  status: { state: "idle", current_time: 0, duration: 0, volume: 1 },
   devices: [], selected_device: null, scan: { running: false, warning: "" },
   current: null, pending: null, casting: null, pin_request: null,
   ...overrides,
@@ -30,7 +30,7 @@ test("state opens the PIN sheet when a pairing is waiting", () => {
 });
 
 test("status replaces server.status", () => {
-  const status = { state: "playing", current_time: 5, duration: 100, volume: 0.5, title: "" };
+  const status = { state: "playing", current_time: 5, duration: 100, volume: 0.5 };
   assert.deepEqual(reduce(live(), { type: "status", data: status }).server.status, status);
 });
 
@@ -67,7 +67,7 @@ test("a wake-up snapshot clears a starting whose cast died while asleep", () => 
 
 test("a playing status never clears starting", () => {
   const before = { ...live(), starting: starting(ted.path) };
-  const status = { state: "playing", current_time: 1, duration: 100, volume: 1, title: "" };
+  const status = { state: "playing", current_time: 1, duration: 100, volume: 1 };
   assert.notEqual(reduce(before, { type: "status", data: status }).starting, null);
 });
 

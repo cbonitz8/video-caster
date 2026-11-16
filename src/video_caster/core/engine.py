@@ -198,6 +198,7 @@ class Engine:
         self.events.publish("devices", self._devices_payload())
         try:
             self.devices = await self._scan(5.0)
+            self._refresh_selected_device()
             if not self.devices and self._multicast_check():
                 self._scan_warning = LOCAL_NETWORK_BLOCKED
             else:
@@ -208,6 +209,14 @@ class Engine:
         finally:
             self._scan_running = False
             self.events.publish("devices", self._devices_payload())
+
+    def _refresh_selected_device(self) -> None:
+        if self.selected_device is None:
+            return
+        for device in self.devices:
+            if device.id == self.selected_device.id:
+                self.selected_device = device
+                return
 
     def select_device(self, device_id: str) -> None:
         for device in self.devices:

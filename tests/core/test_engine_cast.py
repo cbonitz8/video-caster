@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -310,3 +311,36 @@ async def test_replaced_cast_keeps_the_new_casting(engine, orchestrator, video, 
     assert engine.state()["casting"]["path"] == str(other)
     orchestrator.cast_gate.set()
     await engine.cast_task
+
+
+async def test_rescan_refreshes_the_selected_device(make_engine, orchestrator, video):
+    moved = dataclasses.replace(LIVING_ROOM, address="192.168.10.99")
+    engine = make_engine(devices=(LIVING_ROOM,))
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+
+    async def rescan(timeout):
+        return [moved]
+
+    engine._scan = rescan
+    await engine.scan_devices()
+
+    assert engine.selected_device is moved
+    engine.request_cast(video, resume=False)
+    await engine.cast_task
+    assert orchestrator.devices[-1] is moved
+
+
+async def test_rescan_keeps_the_selected_device_when_it_is_missing(make_engine):
+    engine = make_engine(devices=(LIVING_ROOM,))
+    await engine.scan_devices()
+    engine.select_device(LIVING_ROOM.id)
+
+    async def empty_scan(timeout):
+        return []
+
+    engine._scan = empty_scan
+    await engine.scan_devices()
+
+    assert engine.selected_device is LIVING_ROOM
+    assert engine.state()["selected_device"] == LIVING_ROOM.id

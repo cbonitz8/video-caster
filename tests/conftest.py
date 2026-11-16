@@ -59,6 +59,7 @@ class FakeOrchestrator:
         self.asks_pin = False
         self.status = PlaybackStatus()
         self.calls: list[tuple] = []
+        self.devices: list = []
         self.cast_error: Exception | None = None
         self.cast_gate: asyncio.Event | None = None
         self.status_error: Exception | None = None
@@ -72,6 +73,7 @@ class FakeOrchestrator:
 
     async def cast_file(self, file_path, device, request_pin) -> None:
         self.calls.append(("cast_file", file_path, device.id))
+        self.devices.append(device)
         if self.asks_pin:
             await request_pin(device.name)
         if self.cast_gate is not None:
